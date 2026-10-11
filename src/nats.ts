@@ -45,7 +45,24 @@ export class NatsConsumer {
 
 			const js = this.nc.jetstream();
 			const jsm = await js.jetstreamManager();
-			const stream = await jsm.streams.find("*.events.*");
+			const eventSubject = "*.events.*";
+			let stream: string;
+			try {
+				stream = await jsm.streams.find(eventSubject);
+			} catch (err) {
+				const available: string[] = [];
+				for await (const info of jsm.streams.list()) {
+					available.push(`${info.config.name} [${info.config.subjects.join(", ")}]`);
+				}
+				const details = available.length
+					? `Streams présents : ${available.join("; ")}.`
+					: "Aucun stream JetStream n'est configuré.";
+				throw new Error(
+					`Aucun stream JetStream ne correspond au sujet ${eventSubject}. ${details} ` +
+						"Vérifiez que JetStream est activé dans oCIS et que le stream inclut les sujets d'événements oCIS.",
+					{ cause: err },
+				);
+			}
 			const durable = "ocis-qdrant-indexer";
 
 			try {
