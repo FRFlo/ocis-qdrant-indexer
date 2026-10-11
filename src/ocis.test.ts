@@ -3,7 +3,6 @@ import { config } from "./config.ts";
 import { OcisClient } from "./ocis.ts";
 
 const originalFetch = globalThis.fetch;
-const originalPassword = config.ocisPassword;
 const originalToken = config.ocisToken;
 const originalWebdavUrl = config.ocisWebdavUrl;
 
