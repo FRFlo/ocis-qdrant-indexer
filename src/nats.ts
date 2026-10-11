@@ -193,7 +193,27 @@ export class NatsConsumer {
 
 	private async indexExistingFiles(): Promise<void> {
 		try {
-			const files = await this.ocis.listFiles();
+			let files: string[] | undefined;
+			for (let attempt = 1; attempt <= 5; attempt++) {
+				try {
+					files = await this.ocis.listFiles();
+					break;
+				} catch (err) {
+					const isConnectionError =
+						err instanceof Error &&
+						/ECONNREFUSED|ECONNRESET|ETIMEDOUT|Unable to connect|fetch failed/i.test(
+							`${err.name}: ${err.message}`,
+						);
+					if (!isConnectionError || attempt === 5) throw err;
+
+					const delayMs = 1_000 * 2 ** (attempt - 1);
+					console.warn(
+						`[Indexer] WebDAV indisponible, nouvel essai du scan dans ${delayMs} ms (${attempt}/5).`,
+					);
+					await new Promise((resolve) => setTimeout(resolve, delayMs));
+				}
+			}
+			if (!files) throw new Error("Le scan WebDAV n'a retourné aucun résultat.");
 			console.log(`[Indexer] Scan initial WebDAV : ${files.length} fichiers découverts.`);
 			for (const path of files) {
 				if (!isSupportedFile(path)) continue;
