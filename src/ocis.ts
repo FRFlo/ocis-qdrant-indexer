@@ -176,7 +176,9 @@ export class OcisClient {
 		if (res.status !== 401 || !config.ocisToken || !config.ocisUsername) return res;
 
 		await res.body?.cancel();
-		const credentials = Buffer.from(`${config.ocisUsername}:${config.ocisToken}`).toString("base64");
+		const credentials = Buffer.from(`${config.ocisUsername}:${config.ocisToken}`).toString(
+			"base64",
+		);
 		return fetch(url, {
 			...init,
 			headers: { ...this.authHeaders(), Authorization: `Basic ${credentials}` },
