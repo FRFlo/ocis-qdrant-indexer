@@ -33,7 +33,7 @@ export class OcisClient {
 			if (visited.has(directoryUrl)) continue;
 			visited.add(directoryUrl);
 
-			const res = await fetch(directoryUrl, {
+			const res = await this.fetchWebdav(directoryUrl, {
 				method: "PROPFIND",
 				headers: {
 					...this.authHeaders(),
@@ -114,7 +114,7 @@ export class OcisClient {
 		const url = this.fileUrl(segments.join("/"));
 
 		console.log(`[oCIS] Téléchargement du fichier ${path}...`);
-		const res = await fetch(url, {
+		const res = await this.fetchWebdav(url, {
 			headers: this.authHeaders(),
 			signal: AbortSignal.timeout(config.ocisRequestTimeoutMs),
 		});
@@ -169,6 +169,19 @@ export class OcisClient {
 
 	private authHeaders(): Record<string, string> {
 		return this.authHeader ? { Authorization: this.authHeader } : {};
+	}
+
+	private async fetchWebdav(url: string, init: RequestInit): Promise<Response> {
+		const res = await fetch(url, init);
+		if (res.status !== 401 || !config.ocisToken || !config.ocisUsername) return res;
+
+		await res.body?.cancel();
+		const credentials = Buffer.from(`${config.ocisUsername}:${config.ocisToken}`).toString("base64");
+		return fetch(url, {
+			...init,
+			headers: { ...this.authHeaders(), Authorization: `Basic ${credentials}` },
+			signal: AbortSignal.timeout(config.ocisRequestTimeoutMs),
+		});
 	}
 
 	private webdavError(operation: string, res: Response, resource: string): string {

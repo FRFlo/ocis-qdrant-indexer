@@ -33,7 +33,7 @@ describe("OcisClient", () => {
 
 	it("uses a configured oCIS space URL as the root without appending the username", async () => {
 		const spaceUrl =
-			"https://owncloud.frflo.ovh/dav/spaces/2acaad56-f816-4061-a5dd-5e4fb29f8f51$5c6829a8-0925-4b97-9d00-f5533fc91dff/";
+			"https://owncloud.example.org/dav/spaces/2acaad56-f816-4061-a5dd-5e4fb29f8f51$5c6829a8-0925-4b97-9d00-f5533fc91dff/";
 		config.ocisWebdavUrl = spaceUrl;
 		const fetchMock = mock(
 			async (_input: string | URL, _init?: RequestInit) => new Response("document"),
@@ -44,6 +44,28 @@ describe("OcisClient", () => {
 		await client.downloadFile("folder/document.txt");
 
 		expect(fetchMock.mock.calls[0]?.[0]).toBe(`${spaceUrl}folder/document.txt`);
+	});
+
+	it("retries an OIDC/app token as Basic after Bearer is rejected", async () => {
+		config.ocisWebdavUrl = "https://owncloud.example.org/dav/spaces/test-space/";
+		config.ocisPassword = undefined;
+		config.ocisToken = "app-token";
+		const fetchMock = mock(async (_input: string | URL, init?: RequestInit) => {
+			const headers = new Headers(init?.headers);
+			if (fetchMock.mock.calls.length === 1) {
+				expect(headers.get("authorization")).toBe("Bearer app-token");
+				return new Response(null, { status: 401, statusText: "Unauthorized" });
+			}
+			expect(headers.get("authorization")).toBe(
+				`Basic ${Buffer.from(`${config.ocisUsername}:app-token`).toString("base64")}`,
+			);
+			return new Response("document");
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const client = new OcisClient();
+
+		await expect(client.downloadFile("document.txt")).resolves.toEqual(Buffer.from("document"));
+		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
 	it("recursively lists WebDAV files and skips collection entries", async () => {

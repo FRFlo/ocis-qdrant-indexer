@@ -53,7 +53,7 @@ Recherche sémantique dans les cours et documents indexés depuis ownCloud.
 | `OCIS_WEBDAV_URL`          | Racine WebDAV oCIS (endpoint `.../dav/spaces/{space-id}` recommandé) | `http://owncloud:9200/remote.php/dav/files` |
 | `OCIS_USERNAME`            | Nom d'utilisateur oCIS                                               | `admin`                                     |
 | `OCIS_PASSWORD`            | Mot de passe oCIS (authentification Basic WebDAV)                    | -                                           |
-| `OCIS_TOKEN`               | Jeton d'accès WebDAV oCIS (Bearer, prioritaire)                      | -                                           |
+| `OCIS_TOKEN`               | Jeton WebDAV oCIS (Bearer ou jeton d'application)                    | -                                           |
 | `OCIS_REQUEST_TIMEOUT_MS`  | Délai maximal d'un téléchargement WebDAV (ms)                        | `30000`                                     |
 | `OCIS_MAX_FILE_SIZE_BYTES` | Taille maximale téléchargée depuis WebDAV (octets)                   | `52428800`                                  |
 
@@ -62,14 +62,15 @@ Pour indexer un espace oCIS, définissez `OCIS_WEBDAV_URL` sur son endpoint
 racine. L'ancien endpoint `/remote.php/dav/files` reste compatible et reçoit
 automatiquement `OCIS_USERNAME` dans son chemin.
 
-L'indexeur doit disposer de `OCIS_TOKEN` ou de `OCIS_PASSWORD`. Pour Basic,
-`OCIS_USERNAME` et `OCIS_PASSWORD` doivent correspondre à un compte oCIS ayant
-accès à l'espace WebDAV ciblé. Un `401 Unauthorized` indique que ces identifiants
-ou le jeton Bearer sont refusés par oCIS.
+L'indexeur doit disposer de `OCIS_TOKEN` ou de `OCIS_PASSWORD`. Le jeton est
+d'abord envoyé en Bearer ; en cas de `401`, il est réessayé en Basic comme mot de
+passe d'application oCIS. Pour Basic, le nom d'utilisateur doit correspondre au
+compte qui possède l'espace WebDAV ciblé. Les jetons d'application oCIS sont
+utilisés comme mot de passe Basic ; le serveur oCIS doit avoir `auth-app` activé.
 
 Dans Docker Compose, protégez le `$` du space ID contre l'interpolation en
 utilisant une valeur entre apostrophes simples, par exemple :
-`OCIS_WEBDAV_URL: 'https://owncloud.frflo.ovh/dav/spaces/<space-id>/'`.
+`OCIS_WEBDAV_URL: 'https://owncloud.example.org/dav/spaces/<space-id>/'`.
 | `EMBEDDING_PROVIDER` | Provider d'embedding (`cloudflare`, `openai`, `ollama`) | `cloudflare` |
 | `CLOUDFLARE_ACCOUNT_ID` | ID de compte Cloudflare | - |
 | `CLOUDFLARE_API_TOKEN` | Jeton API Cloudflare Workers AI | - |
