@@ -45,22 +45,37 @@ Recherche sémantique dans les cours et documents indexés depuis ownCloud.
 
 ## Variables d'environnement
 
-| Variable                   | Description                                             | Défaut                                      |
-| -------------------------- | ------------------------------------------------------- | ------------------------------------------- |
-| `NATS_URL`                 | URL de connexion au bus NATS oCIS                       | `nats://owncloud:9233`                      |
-| `QDRANT_URL`               | URL de la base vectorielle Qdrant                       | `http://qdrant:6333`                        |
-| `QDRANT_COLLECTION`        | Nom de la collection vectorielle                        | `owncloud_documents`                        |
-| `OCIS_WEBDAV_URL`          | URL WebDAV interne oCIS                                 | `http://owncloud:9200/remote.php/dav/files` |
-| `OCIS_USERNAME`            | Nom d'utilisateur oCIS                                  | `admin`                                     |
-| `OCIS_TOKEN`               | Jeton d'authentification oCIS (Bearer)                  | -                                           |
-| `OCIS_REQUEST_TIMEOUT_MS`  | Délai maximal d'un téléchargement WebDAV (ms)           | `30000`                                     |
-| `OCIS_MAX_FILE_SIZE_BYTES` | Taille maximale téléchargée depuis WebDAV (octets)      | `52428800`                                  |
-| `EMBEDDING_PROVIDER`       | Provider d'embedding (`cloudflare`, `openai`, `ollama`) | `cloudflare`                                |
-| `CLOUDFLARE_ACCOUNT_ID`    | ID de compte Cloudflare                                 | -                                           |
-| `CLOUDFLARE_API_TOKEN`     | Jeton API Cloudflare Workers AI                         | -                                           |
-| `CLOUDFLARE_MODEL`         | Modèle d'embedding Cloudflare                           | `@cf/baai/bge-m3`                           |
-| `MCP_PORT`                 | Port d'écoute du serveur MCP                            | `3000`                                      |
-| `MCP_AUTH_TOKEN`           | Jeton Bearer facultatif pour protéger les routes MCP    | - (authentification désactivée)             |
+| Variable                   | Description                                                          | Défaut                                      |
+| -------------------------- | -------------------------------------------------------------------- | ------------------------------------------- |
+| `NATS_URL`                 | URL de connexion au bus NATS oCIS                                    | `nats://owncloud:9233`                      |
+| `QDRANT_URL`               | URL de la base vectorielle Qdrant                                    | `http://qdrant:6333`                        |
+| `QDRANT_COLLECTION`        | Nom de la collection vectorielle                                     | `owncloud_documents`                        |
+| `OCIS_WEBDAV_URL`          | Racine WebDAV oCIS (endpoint `.../dav/spaces/{space-id}` recommandé) | `http://owncloud:9200/remote.php/dav/files` |
+| `OCIS_USERNAME`            | Nom d'utilisateur oCIS                                               | `admin`                                     |
+| `OCIS_PASSWORD`            | Mot de passe oCIS (authentification Basic WebDAV)                    | -                                           |
+| `OCIS_TOKEN`               | Jeton d'accès WebDAV oCIS (Bearer, prioritaire)                      | -                                           |
+| `OCIS_REQUEST_TIMEOUT_MS`  | Délai maximal d'un téléchargement WebDAV (ms)                        | `30000`                                     |
+| `OCIS_MAX_FILE_SIZE_BYTES` | Taille maximale téléchargée depuis WebDAV (octets)                   | `52428800`                                  |
+
+Pour indexer un espace oCIS, définissez `OCIS_WEBDAV_URL` sur son endpoint
+`/dav/spaces/{space-id}/`. L'indexeur ajoute les chemins de fichiers à cette
+racine. L'ancien endpoint `/remote.php/dav/files` reste compatible et reçoit
+automatiquement `OCIS_USERNAME` dans son chemin.
+
+L'indexeur doit disposer de `OCIS_TOKEN` ou de `OCIS_PASSWORD`. Pour Basic,
+`OCIS_USERNAME` et `OCIS_PASSWORD` doivent correspondre à un compte oCIS ayant
+accès à l'espace WebDAV ciblé. Un `401 Unauthorized` indique que ces identifiants
+ou le jeton Bearer sont refusés par oCIS.
+
+Dans Docker Compose, protégez le `$` du space ID contre l'interpolation en
+utilisant une valeur entre apostrophes simples, par exemple :
+`OCIS_WEBDAV_URL: 'https://owncloud.frflo.ovh/dav/spaces/<space-id>/'`.
+| `EMBEDDING_PROVIDER` | Provider d'embedding (`cloudflare`, `openai`, `ollama`) | `cloudflare` |
+| `CLOUDFLARE_ACCOUNT_ID` | ID de compte Cloudflare | - |
+| `CLOUDFLARE_API_TOKEN` | Jeton API Cloudflare Workers AI | - |
+| `CLOUDFLARE_MODEL` | Modèle d'embedding Cloudflare | `@cf/baai/bge-m3` |
+| `MCP_PORT` | Port d'écoute du serveur MCP | `3000` |
+| `MCP_AUTH_TOKEN` | Jeton Bearer facultatif pour protéger les routes MCP | - (authentification désactivée) |
 
 Lorsque `MCP_AUTH_TOKEN` est défini, les clients doivent envoyer
 `Authorization: Bearer <jeton>` sur `/mcp` (et `/api/v1/mcp`). Sans cette variable,

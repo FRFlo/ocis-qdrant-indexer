@@ -12,7 +12,9 @@ export class OcisClient {
 			const creds = Buffer.from(`${config.ocisUsername}:${config.ocisPassword}`).toString("base64");
 			this.authHeader = `Basic ${creds}`;
 		} else {
-			this.authHeader = "";
+			throw new Error(
+				"Authentification WebDAV absente : définissez OCIS_TOKEN (Bearer) ou OCIS_PASSWORD (Basic).",
+			);
 		}
 	}
 
@@ -42,9 +44,7 @@ export class OcisClient {
 				signal: AbortSignal.timeout(config.ocisRequestTimeoutMs),
 			});
 			if (!res.ok) {
-				throw new Error(
-					`Échec de l'énumération WebDAV (${res.status} ${res.statusText}) pour ${directoryUrl}`,
-				);
+				throw new Error(this.webdavError("l'énumération", res, directoryUrl));
 			}
 
 			const xml = await res.text();
@@ -119,9 +119,7 @@ export class OcisClient {
 			signal: AbortSignal.timeout(config.ocisRequestTimeoutMs),
 		});
 		if (!res.ok) {
-			throw new Error(
-				`Échec du téléchargement WebDAV (${res.status} ${res.statusText}) pour ${path}`,
-			);
+			throw new Error(this.webdavError("du téléchargement", res, path));
 		}
 
 		const contentLength = Number(res.headers.get("content-length"));
@@ -158,13 +156,27 @@ export class OcisClient {
 
 	private fileUrl(path: string): string {
 		const baseUrl = this.baseUrl.endsWith("/") ? this.baseUrl : `${this.baseUrl}/`;
-		const segments = [config.ocisUsername, ...path.split("/").filter(Boolean)];
+		const isLegacyFilesEndpoint = /\/(?:remote\.php\/)?dav\/files\/?$/i.test(
+			new URL(baseUrl).pathname,
+		);
+		const segments = [
+			...(isLegacyFilesEndpoint ? [config.ocisUsername] : []),
+			...path.split("/").filter(Boolean),
+		];
 		const encodedPath = segments.map(encodeURIComponent).join("/");
-		return new URL(path ? encodedPath : `${encodedPath}/`, baseUrl).toString();
+		return new URL(path ? encodedPath : encodedPath ? `${encodedPath}/` : "", baseUrl).toString();
 	}
 
 	private authHeaders(): Record<string, string> {
 		return this.authHeader ? { Authorization: this.authHeader } : {};
+	}
+
+	private webdavError(operation: string, res: Response, resource: string): string {
+		const hint =
+			res.status === 401
+				? " Vérifiez OCIS_USERNAME et OCIS_PASSWORD, ou utilisez un OCIS_TOKEN valide pour WebDAV."
+				: "";
+		return `Échec ${operation} WebDAV (${res.status} ${res.statusText}) pour ${resource}.${hint}`;
 	}
 
 	private xmlTag(xml: string, tag: string): string | undefined {

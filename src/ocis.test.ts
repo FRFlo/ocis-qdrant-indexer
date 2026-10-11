@@ -1,10 +1,19 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import { config } from "./config.ts";
 import { OcisClient } from "./ocis.ts";
 
 const originalFetch = globalThis.fetch;
+const originalPassword = config.ocisPassword;
+const originalToken = config.ocisToken;
+const originalWebdavUrl = config.ocisWebdavUrl;
+
+config.ocisPassword = "test-password";
 
 afterEach(() => {
 	globalThis.fetch = originalFetch;
+	config.ocisPassword = "test-password";
+	config.ocisToken = originalToken;
+	config.ocisWebdavUrl = originalWebdavUrl;
 });
 
 describe("OcisClient", () => {
@@ -21,6 +30,21 @@ describe("OcisClient", () => {
 		expect(fetchMock.mock.calls[0]?.[0]).toBe(
 			"http://owncloud:9200/remote.php/dav/files/admin/folder/my%20file.md",
 		);
+	});
+
+	it("uses a configured oCIS space URL as the root without appending the username", async () => {
+		const spaceUrl =
+			"https://owncloud.frflo.ovh/dav/spaces/2acaad56-f816-4061-a5dd-5e4fb29f8f51$5c6829a8-0925-4b97-9d00-f5533fc91dff/";
+		config.ocisWebdavUrl = spaceUrl;
+		const fetchMock = mock(
+			async (_input: string | URL, _init?: RequestInit) => new Response("document"),
+		);
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const client = new OcisClient();
+
+		await client.downloadFile("folder/document.txt");
+
+		expect(fetchMock.mock.calls[0]?.[0]).toBe(`${spaceUrl}folder/document.txt`);
 	});
 
 	it("recursively lists WebDAV files and skips collection entries", async () => {
