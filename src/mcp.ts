@@ -6,84 +6,91 @@ import { config } from "./config.ts";
 import type { QdrantManager } from "./qdrant.ts";
 
 export function createMcpServer(qdrant: QdrantManager) {
-	const server = new McpServer({
-		name: "ocis-qdrant-rag",
-		version: "1.0.0",
-	});
+	const sessions = new Map<
+		string,
+		{ server: McpServer; transport: WebStandardStreamableHTTPServerTransport }
+	>();
 
-	// Outil 1 : Recherche sémantique dans les documents ownCloud
-	server.registerTool(
-		"search_owncloud_docs",
-		{
-			description:
-				"Recherche sémantique dans les cours et documents synchronisés depuis ownCloud Infinite Scale",
-			inputSchema: {
-				query: z.string().describe("La question ou les mots-clés de recherche sémantique"),
-				limit: z
-					.number()
-					.int()
-					.min(1)
-					.max(100)
-					.optional()
-					.default(5)
-					.describe("Nombre d'extraits pertinents à retourner (1 à 100)"),
-				path_prefix: z
-					.string()
-					.optional()
-					.describe("Filtre optionnel sur le chemin (ex: Cours/AP4/ ou Notes/)"),
+	function buildSession() {
+		const server = new McpServer({
+			name: "ocis-qdrant-rag",
+			version: "1.0.0",
+		});
+
+		// Outil 1 : Recherche sémantique dans les documents ownCloud
+		server.registerTool(
+			"search_owncloud_docs",
+			{
+				description:
+					"Recherche sémantique dans les cours et documents synchronisés depuis ownCloud Infinite Scale",
+				inputSchema: {
+					query: z.string().describe("La question ou les mots-clés de recherche sémantique"),
+					limit: z
+						.number()
+						.int()
+						.min(1)
+						.max(100)
+						.optional()
+						.default(5)
+						.describe("Nombre d'extraits pertinents à retourner (1 à 100)"),
+					path_prefix: z
+						.string()
+						.optional()
+						.describe("Filtre optionnel sur le chemin (ex: Cours/AP4/ ou Notes/)"),
+				},
+				annotations: { readOnlyHint: true, openWorldHint: false },
 			},
-			annotations: { readOnlyHint: true, openWorldHint: false },
-		},
-		async ({ query, limit, path_prefix }) => {
-			try {
-				const results = await qdrant.search(query, limit, path_prefix);
-				if (results.length === 0) {
+			async ({ query, limit, path_prefix }) => {
+				try {
+					const results = await qdrant.search(query, limit, path_prefix);
+					if (results.length === 0) {
+						return {
+							content: [
+								{
+									type: "text",
+									text: "Aucun document pertinent trouvé dans le coffre ownCloud.",
+								},
+							],
+						};
+					}
+
+					const formatted = results
+						.map(
+							(r, i) =>
+								`### [${i + 1}] Source: ${r.path} (Score: ${r.score.toFixed(3)})\n${r.text}\n`,
+						)
+						.join("\n---\n\n");
+
 					return {
 						content: [
 							{
 								type: "text",
-								text: "Aucun document pertinent trouvé dans le coffre ownCloud.",
+								text: formatted,
+							},
+						],
+					};
+				} catch (err: unknown) {
+					const message = err instanceof Error ? err.message : String(err);
+					return {
+						isError: true,
+						content: [
+							{
+								type: "text",
+								text: `Erreur lors de la recherche Qdrant: ${message}`,
 							},
 						],
 					};
 				}
+			},
+		);
 
-				const formatted = results
-					.map(
-						(r, i) =>
-							`### [${i + 1}] Source: ${r.path} (Score: ${r.score.toFixed(3)})\n${r.text}\n`,
-					)
-					.join("\n---\n\n");
+		const transport = new WebStandardStreamableHTTPServerTransport({
+			sessionIdGenerator: () => crypto.randomUUID(),
+		});
 
-				return {
-					content: [
-						{
-							type: "text",
-							text: formatted,
-						},
-					],
-				};
-			} catch (err: unknown) {
-				const message = err instanceof Error ? err.message : String(err);
-				return {
-					isError: true,
-					content: [
-						{
-							type: "text",
-							text: `Erreur lors de la recherche Qdrant: ${message}`,
-						},
-					],
-				};
-			}
-		},
-	);
-
-	// Serveur HTTP natif Bun avec transport Streamable HTTP
-	const transport = new WebStandardStreamableHTTPServerTransport({
-		sessionIdGenerator: undefined, // mode stateless
-	});
-
-	server.connect(transport);
+		server.connect(transport);
+		return { server, transport };
+	}
 
 	Bun.serve({
 		port: config.mcpPort,
@@ -99,7 +106,22 @@ export function createMcpServer(qdrant: QdrantManager) {
 						headers: { "WWW-Authenticate": "Bearer" },
 					});
 				}
-				return transport.handleRequest(req);
+
+				const sessionId = req.headers.get("mcp-session-id");
+				let session = sessionId ? sessions.get(sessionId) : undefined;
+				if (!session) {
+					session = buildSession();
+				}
+
+				const response = await session.transport.handleRequest(req);
+				const sid = response.headers.get("mcp-session-id") || session.transport.sessionId;
+				if (sid && !sessions.has(sid)) {
+					sessions.set(sid, session);
+					session.transport.onclose = () => {
+						sessions.delete(sid);
+					};
+				}
+				return response;
 			}
 
 			// Check the configured vector-store dependency without exposing connection details.
