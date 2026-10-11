@@ -1,4 +1,10 @@
-import { connect, type NatsConnection } from "nats";
+import {
+	AckPolicy,
+	connect,
+	DeliverPolicy,
+	type ConsumerMessages,
+	type NatsConnection,
+} from "nats";
 import { config } from "./config.ts";
 import type { OcisClient } from "./ocis.ts";
 import { chunkText, extractText } from "./parser.ts";
@@ -22,6 +28,7 @@ export interface OcisEvent {
 
 export class NatsConsumer {
 	private nc?: NatsConnection;
+	private messages?: ConsumerMessages;
 	private qdrant: QdrantManager;
 	private ocis: OcisClient;
 
@@ -37,15 +44,27 @@ export class NatsConsumer {
 			console.log("[NATS] Connecté avec succès !");
 
 			const js = this.nc.jetstream();
+			const jsm = await js.jetstreamManager();
+			const stream = await jsm.streams.find("*.events.*");
+			const durable = "ocis-qdrant-indexer";
 
-			// Souscription aux événements JetStream de stockage
-			// Sujets oCIS standards émis par le service storage-users
-			const sub = await js.subscribe("*.events.*", {
-				durable: "ocis-qdrant-indexer",
-			});
+			try {
+				await jsm.consumers.info(stream, durable);
+			} catch {
+				await jsm.consumers.add(stream, {
+					durable_name: durable,
+					filter_subject: "*.events.*",
+					deliver_policy: DeliverPolicy.All,
+					ack_policy: AckPolicy.Explicit,
+					ack_wait: 30_000_000_000,
+					max_deliver: 10,
+				});
+			}
+			const consumer = await js.consumers.get(stream, durable);
+			this.messages = await consumer.consume();
 
 			(async () => {
-				for await (const m of sub) {
+				for await (const m of this.messages!) {
 					try {
 						const eventName = m.subject;
 						const rawData = m.data.toString();
@@ -56,14 +75,18 @@ export class NatsConsumer {
 						m.ack();
 					} catch (err) {
 						console.error("[NATS] Erreur traitement événement:", err);
-						m.nak();
+						// Delay the retry to avoid a hot loop on persistent failures.
+						m.nak(5000);
 					}
 				}
 			})();
 		} catch (err) {
 			console.error("[NATS] Erreur connexion au bus:", err);
-			// Ne bloque pas le démarrage de l'app si NATS n'est pas encore prêt, retente en arrière-plan
-			setTimeout(() => this.start(), 5000);
+			// Retry connection or subscription failures without retaining a broken
+			// connection or recursively creating timers.
+			await this.nc?.close().catch(() => undefined);
+			this.nc = undefined;
+			setTimeout(() => void this.start(), 5000);
 		}
 	}
 
@@ -94,6 +117,7 @@ export class NatsConsumer {
 				await this.qdrant.indexChunks(path, nodeId, chunks);
 			} catch (err) {
 				console.error(`[Indexer] Échec de l'indexation de ${path}:`, err);
+				throw err;
 			}
 		}
 
@@ -108,11 +132,13 @@ export class NatsConsumer {
 				await this.qdrant.deleteFileVectors(path);
 			} catch (err) {
 				console.error(`[Indexer] Échec de la purge de ${path}:`, err);
+				throw err;
 			}
 		}
 	}
 
 	async close(): Promise<void> {
+		await this.messages?.close();
 		if (this.nc) {
 			await this.nc.close();
 		}

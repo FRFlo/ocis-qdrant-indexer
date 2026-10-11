@@ -61,18 +61,23 @@ export class QdrantManager {
 	async indexChunks(path: string, nodeId: string, chunks: Chunk[]): Promise<number> {
 		if (chunks.length === 0) return 0;
 
-		// 1. Supprime d'abord les anciens vecteurs du fichier
-		await this.deleteFileVectors(path);
-
-		// 2. Calcule les embeddings par batch
+		// Generate all embeddings before changing the current index. A provider
+		// failure must not make an already indexed document disappear.
 		const texts = chunks.map((c) => c.text);
 		console.log(`[Qdrant] Calcul de ${texts.length} embeddings pour ${path}...`);
 		const vectors = await this.embedder.embed(texts);
+		if (
+			vectors.length !== chunks.length ||
+			vectors.some((vector) => vector.length !== this.embedder.dimensions())
+		) {
+			throw new Error(`Réponse embeddings invalide pour ${path}`);
+		}
 
-		// 3. Insère les nouveaux points
+		// Upsert first, then remove stale points. Deterministic IDs allow the
+		// cleanup filter to preserve exactly the newly indexed points.
 		const points = chunks.map((chunk, idx) => ({
-			id: crypto.randomUUID(),
-			vector: vectors[idx] ?? [],
+			id: this.pointId(path, chunk.chunkIndex),
+			vector: vectors[idx]!,
 			payload: {
 				path,
 				node_id: nodeId,
@@ -87,9 +92,28 @@ export class QdrantManager {
 			wait: true,
 			points,
 		});
+		await this.client.delete(this.collection, {
+			filter: {
+				must: [{ key: "path", match: { value: path } }],
+				must_not: [{ has_id: points.map((point) => point.id) }],
+			},
+			wait: true,
+		});
 
 		console.log(`[Qdrant] ${points.length} chunks indexés avec succès pour ${path}`);
 		return points.length;
+	}
+
+	private pointId(path: string, chunkIndex: number): string {
+		// Qdrant accepts UUID point IDs. Hashing keeps chunk IDs stable between
+		// retries while avoiding collisions between files.
+		const hash = new Bun.CryptoHasher("sha256").update(`${path}\0${chunkIndex}`).digest();
+		const bytes = new Uint8Array(16);
+		for (let i = 0; i < bytes.length; i++) bytes[i] = hash[i]!;
+		bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+		bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+		const hex = Buffer.from(bytes).toString("hex");
+		return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 	}
 
 	async search(query: string, limit = 5, pathPrefix?: string) {
@@ -108,14 +132,14 @@ export class QdrantManager {
 			];
 		}
 
-		const results = await this.client.search(this.collection, {
-			vector: queryVector,
-			limit,
+		const { points } = await this.client.query(this.collection, {
+			query: queryVector,
+			limit: Math.max(1, Math.min(Math.trunc(limit), 100)),
 			filter: Object.keys(filter).length > 0 ? filter : undefined,
 			with_payload: true,
 		});
 
-		return results.map((r) => ({
+		return points.map((r) => ({
 			score: r.score,
 			path: r.payload?.path as string,
 			filename: r.payload?.filename as string,
