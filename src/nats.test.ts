@@ -4,6 +4,24 @@ import type { OcisClient } from "./ocis.ts";
 import type { QdrantManager } from "./qdrant.ts";
 
 describe("NatsConsumer", () => {
+	it("retries the initial WebDAV scan after a connection refusal", async () => {
+		let attempts = 0;
+		const ocis = {
+			listFiles: mock(async () => {
+				attempts++;
+				if (attempts === 1) throw new Error("ECONNREFUSED");
+				return [];
+			}),
+		} as unknown as OcisClient;
+		const consumer = new NatsConsumer({} as QdrantManager, ocis);
+
+		await (
+			consumer as unknown as { indexExistingFiles: () => Promise<void> }
+		).indexExistingFiles();
+
+		expect(ocis.listFiles).toHaveBeenCalledTimes(2);
+	});
+
 	it("indexes official oCIS UploadReady payloads and propagates failures", async () => {
 		const ocis = {
 			downloadFile: mock(async () => Buffer.from("content")),
