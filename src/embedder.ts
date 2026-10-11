@@ -16,8 +16,8 @@ export class CloudflareEmbedder implements Embedder {
 		this.model = model || config.cloudflareModel;
 
 		if (!this.accountId || !this.apiToken) {
-			console.warn(
-				"[Embedder] Attention : CLOUDFLARE_ACCOUNT_ID ou CLOUDFLARE_API_TOKEN non défini.",
+			throw new Error(
+				"EMBEDDING_PROVIDER=cloudflare requiert CLOUDFLARE_ACCOUNT_ID et CLOUDFLARE_API_TOKEN.",
 			);
 		}
 	}
@@ -66,6 +66,9 @@ export class OpenAIEmbedder implements Embedder {
 		this.apiKey = apiKey || config.openaiApiKey || "";
 		this.model = model || config.openaiModel;
 		this.baseUrl = baseUrl || config.openaiBaseUrl;
+		if (!this.apiKey) {
+			throw new Error("EMBEDDING_PROVIDER=openai requiert OPENAI_API_KEY.");
+		}
 	}
 
 	dimensions(): number {

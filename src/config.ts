@@ -7,6 +7,8 @@ export interface Config {
 	ocisUsername: string;
 	ocisPassword?: string;
 	ocisToken?: string;
+	ocisRequestTimeoutMs: number;
+	ocisMaxFileSizeBytes: number;
 	embeddingProvider: "cloudflare" | "openai" | "ollama";
 	cloudflareAccountId?: string;
 	cloudflareApiToken?: string;
@@ -19,24 +21,56 @@ export interface Config {
 	mcpPort: number;
 }
 
-export const config: Config = {
-	natsUrl: process.env.NATS_URL || "nats://owncloud:9233",
-	qdrantUrl: process.env.QDRANT_URL || "http://qdrant:6333",
-	qdrantApiKey: process.env.QDRANT_API_KEY,
-	qdrantCollection: process.env.QDRANT_COLLECTION || "owncloud_documents",
-	ocisWebdavUrl: process.env.OCIS_WEBDAV_URL || "http://owncloud:9200/remote.php/dav/files",
-	ocisUsername: process.env.OCIS_USERNAME || "admin",
-	ocisPassword: process.env.OCIS_PASSWORD,
-	ocisToken: process.env.OCIS_TOKEN,
-	embeddingProvider:
-		(process.env.EMBEDDING_PROVIDER as "cloudflare" | "openai" | "ollama") || "cloudflare",
-	cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID,
-	cloudflareApiToken: process.env.CLOUDFLARE_API_TOKEN,
-	cloudflareModel: process.env.CLOUDFLARE_MODEL || "@cf/baai/bge-m3",
-	openaiApiKey: process.env.OPENAI_API_KEY,
-	openaiModel: process.env.OPENAI_MODEL || "text-embedding-3-small",
-	openaiBaseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
-	ollamaBaseUrl: process.env.OLLAMA_BASE_URL || "http://host.docker.internal:11434",
-	ollamaModel: process.env.OLLAMA_MODEL || "bge-m3",
-	mcpPort: Number.parseInt(process.env.MCP_PORT || "3000", 10),
-};
+function positiveInteger(value: string | undefined, fallback: number, name: string): number {
+	if (value === undefined || value === "") return fallback;
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+		throw new Error(`${name} doit être un entier positif.`);
+	}
+	return parsed;
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+	const provider = env.EMBEDDING_PROVIDER || "cloudflare";
+	if (!["cloudflare", "openai", "ollama"].includes(provider)) {
+		throw new Error(
+			`EMBEDDING_PROVIDER invalide (« ${provider} »). Valeurs acceptées : cloudflare, openai, ollama.`,
+		);
+	}
+
+	const mcpPort = positiveInteger(env.MCP_PORT, 3000, "MCP_PORT");
+	if (mcpPort > 65535) throw new Error("MCP_PORT doit être compris entre 1 et 65535.");
+
+	return {
+		natsUrl: env.NATS_URL || "nats://owncloud:9233",
+		qdrantUrl: env.QDRANT_URL || "http://qdrant:6333",
+		qdrantApiKey: env.QDRANT_API_KEY,
+		qdrantCollection: env.QDRANT_COLLECTION || "owncloud_documents",
+		ocisWebdavUrl: env.OCIS_WEBDAV_URL || "http://owncloud:9200/remote.php/dav/files",
+		ocisUsername: env.OCIS_USERNAME || "admin",
+		ocisPassword: env.OCIS_PASSWORD,
+		ocisToken: env.OCIS_TOKEN,
+		ocisRequestTimeoutMs: positiveInteger(
+			env.OCIS_REQUEST_TIMEOUT_MS,
+			30_000,
+			"OCIS_REQUEST_TIMEOUT_MS",
+		),
+		ocisMaxFileSizeBytes: positiveInteger(
+			env.OCIS_MAX_FILE_SIZE_BYTES,
+			50 * 1024 * 1024,
+			"OCIS_MAX_FILE_SIZE_BYTES",
+		),
+		embeddingProvider: provider as Config["embeddingProvider"],
+		cloudflareAccountId: env.CLOUDFLARE_ACCOUNT_ID,
+		cloudflareApiToken: env.CLOUDFLARE_API_TOKEN,
+		cloudflareModel: env.CLOUDFLARE_MODEL || "@cf/baai/bge-m3",
+		openaiApiKey: env.OPENAI_API_KEY,
+		openaiModel: env.OPENAI_MODEL || "text-embedding-3-small",
+		openaiBaseUrl: env.OPENAI_BASE_URL || "https://api.openai.com/v1",
+		ollamaBaseUrl: env.OLLAMA_BASE_URL || "http://host.docker.internal:11434",
+		ollamaModel: env.OLLAMA_MODEL || "bge-m3",
+		mcpPort,
+	};
+}
+
+export const config = loadConfig();
