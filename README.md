@@ -44,19 +44,27 @@ Recherche sémantique dans les cours et documents indexés depuis ownCloud.
 
 ## Variables d'environnement
 
-| Variable                | Description                                             | Défaut                                      |
-| ----------------------- | ------------------------------------------------------- | ------------------------------------------- |
-| `NATS_URL`              | URL de connexion au bus NATS oCIS                       | `nats://owncloud:9233`                      |
-| `QDRANT_URL`            | URL de la base vectorielle Qdrant                       | `http://qdrant:6333`                        |
-| `QDRANT_COLLECTION`     | Nom de la collection vectorielle                        | `owncloud_documents`                        |
-| `OCIS_WEBDAV_URL`       | URL WebDAV interne oCIS                                 | `http://owncloud:9200/remote.php/dav/files` |
-| `OCIS_USERNAME`         | Nom d'utilisateur oCIS                                  | `admin`                                     |
-| `OCIS_TOKEN`            | Jeton d'authentification oCIS (Bearer)                  | -                                           |
-| `EMBEDDING_PROVIDER`    | Provider d'embedding (`cloudflare`, `openai`, `ollama`) | `cloudflare`                                |
-| `CLOUDFLARE_ACCOUNT_ID` | ID de compte Cloudflare                                 | -                                           |
-| `CLOUDFLARE_API_TOKEN`  | Jeton API Cloudflare Workers AI                         | -                                           |
-| `CLOUDFLARE_MODEL`      | Modèle d'embedding Cloudflare                           | `@cf/baai/bge-m3`                           |
-| `MCP_PORT`              | Port d'écoute du serveur MCP                            | `3000`                                      |
+| Variable                   | Description                                             | Défaut                                      |
+| -------------------------- | ------------------------------------------------------- | ------------------------------------------- |
+| `NATS_URL`                 | URL de connexion au bus NATS oCIS                       | `nats://owncloud:9233`                      |
+| `QDRANT_URL`               | URL de la base vectorielle Qdrant                       | `http://qdrant:6333`                        |
+| `QDRANT_COLLECTION`        | Nom de la collection vectorielle                        | `owncloud_documents`                        |
+| `OCIS_WEBDAV_URL`          | URL WebDAV interne oCIS                                 | `http://owncloud:9200/remote.php/dav/files` |
+| `OCIS_USERNAME`            | Nom d'utilisateur oCIS                                  | `admin`                                     |
+| `OCIS_TOKEN`               | Jeton d'authentification oCIS (Bearer)                  | -                                           |
+| `OCIS_REQUEST_TIMEOUT_MS`  | Délai maximal d'un téléchargement WebDAV (ms)           | `30000`                                     |
+| `OCIS_MAX_FILE_SIZE_BYTES` | Taille maximale téléchargée depuis WebDAV (octets)      | `52428800`                                  |
+| `EMBEDDING_PROVIDER`       | Provider d'embedding (`cloudflare`, `openai`, `ollama`) | `cloudflare`                                |
+| `CLOUDFLARE_ACCOUNT_ID`    | ID de compte Cloudflare                                 | -                                           |
+| `CLOUDFLARE_API_TOKEN`     | Jeton API Cloudflare Workers AI                         | -                                           |
+| `CLOUDFLARE_MODEL`         | Modèle d'embedding Cloudflare                           | `@cf/baai/bge-m3`                           |
+| `MCP_PORT`                 | Port d'écoute du serveur MCP                            | `3000`                                      |
+| `MCP_AUTH_TOKEN`           | Jeton Bearer facultatif pour protéger les routes MCP    | - (authentification désactivée)             |
+
+Lorsque `MCP_AUTH_TOKEN` est défini, les clients doivent envoyer
+`Authorization: Bearer <jeton>` sur `/mcp` (et `/api/v1/mcp`). Sans cette variable,
+les routes MCP restent accessibles sans authentification. Gardez le port MCP sur
+un réseau de confiance si l'authentification est désactivée.
 
 ## Développement local
 
