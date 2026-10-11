@@ -5,9 +5,10 @@ import {
 	type ConsumerMessages,
 	type NatsConnection,
 } from "nats";
+import { createHash } from "node:crypto";
 import { config } from "./config.ts";
 import type { OcisClient } from "./ocis.ts";
-import { chunkText, extractText } from "./parser.ts";
+import { chunkText, extractText, isSupportedFile } from "./parser.ts";
 import type { QdrantManager } from "./qdrant.ts";
 
 export interface OcisEvent {
@@ -47,11 +48,21 @@ const OCIS_STREAM = "main-queue";
 const OCIS_SUBJECT = "main-queue";
 const EVENT_TYPE_METADATA = "eventtype";
 
+function normalizeFilePath(path: string): string {
+	return path
+		.replace(/\\/g, "/")
+		.split("/")
+		.filter((segment) => segment && segment !== ".")
+		.join("/");
+}
+
 export class NatsConsumer {
 	private nc?: NatsConnection;
 	private messages?: ConsumerMessages;
 	private qdrant: QdrantManager;
 	private ocis: OcisClient;
+	private initialScanStarted = false;
+	private indexingByPath = new Map<string, Promise<void>>();
 
 	constructor(qdrant: QdrantManager, ocis: OcisClient) {
 		this.qdrant = qdrant;
@@ -60,6 +71,10 @@ export class NatsConsumer {
 
 	async start(): Promise<void> {
 		console.log(`[NATS] Connexion au bus oCIS sur ${config.natsUrl}...`);
+		if (!this.initialScanStarted) {
+			this.initialScanStarted = true;
+			void this.indexExistingFiles();
+		}
 		try {
 			this.nc = await connect({ servers: config.natsUrl });
 			console.log("[NATS] Connecté avec succès !");
@@ -137,7 +152,8 @@ export class NatsConsumer {
 
 	async handleEvent(eventName: string, data: OcisEvent): Promise<void> {
 		const fileRef = data.FileRef ?? data.Ref;
-		const path = fileRef?.Path ?? fileRef?.path;
+		const rawPath = fileRef?.Path ?? fileRef?.path;
+		const path = rawPath ? normalizeFilePath(rawPath) : "";
 		const resourceId = data.ResourceID ?? data.ID ?? data.id;
 		const fileResourceId = fileRef?.ResourceId ?? fileRef?.resource_id;
 		const nodeId =
@@ -156,17 +172,7 @@ export class NatsConsumer {
 			}
 			console.log(`[Indexer] Indexation demandée pour ${path} (ID: ${nodeId})`);
 			try {
-				const buffer = await this.ocis.downloadFile(path);
-				const filename = path.split("/").pop() || "";
-				const parsed = await extractText(filename, buffer);
-
-				if (!parsed.text.trim()) {
-					console.log(`[Indexer] Aucun texte extractible pour ${path}, ignoré.`);
-					return;
-				}
-
-				const chunks = chunkText(parsed.text);
-				await this.qdrant.indexChunks(path, nodeId, chunks);
+				await this.indexFile(path, nodeId);
 			} catch (err) {
 				console.error(`[Indexer] Échec de l'indexation de ${path}:`, err);
 				throw err;
@@ -183,6 +189,62 @@ export class NatsConsumer {
 				throw err;
 			}
 		}
+	}
+
+	private async indexExistingFiles(): Promise<void> {
+		try {
+			const files = await this.ocis.listFiles();
+			console.log(`[Indexer] Scan initial WebDAV : ${files.length} fichiers découverts.`);
+			for (const path of files) {
+				if (!isSupportedFile(path)) continue;
+				try {
+					await this.indexFile(path, "unknown");
+				} catch (err) {
+					console.error(`[Indexer] Échec du scan de ${path}, les autres fichiers continuent:`, err);
+				}
+			}
+			console.log("[Indexer] Scan initial WebDAV terminé.");
+		} catch (err) {
+			console.error("[Indexer] Échec du scan initial WebDAV:", err);
+		}
+	}
+
+	private async indexFile(path: string, nodeId: string): Promise<void> {
+		const previous = this.indexingByPath.get(path) ?? Promise.resolve();
+		const current = previous
+			.catch(() => undefined)
+			.then(() => this.indexFileIfChanged(path, nodeId));
+		this.indexingByPath.set(path, current);
+
+		try {
+			await current;
+		} finally {
+			if (this.indexingByPath.get(path) === current) {
+				this.indexingByPath.delete(path);
+			}
+		}
+	}
+
+	private async indexFileIfChanged(path: string, nodeId: string): Promise<void> {
+		const buffer = await this.ocis.downloadFile(path);
+		const contentHash = createHash("sha256").update(buffer).digest("hex");
+		if (await this.qdrant.hasCurrentContentHash(path, contentHash)) {
+			console.log(`[Indexer] Contenu inchangé pour ${path}, embeddings conservés.`);
+			return;
+		}
+
+		const filename = path.split("/").pop() || "";
+		const parsed = await extractText(filename, buffer);
+		if (!parsed.text.trim()) {
+			console.log(
+				`[Indexer] Aucun texte extractible pour ${path}, suppression des anciens vecteurs.`,
+			);
+			await this.qdrant.deleteFileVectors(path);
+			return;
+		}
+
+		const chunks = chunkText(parsed.text);
+		await this.qdrant.indexChunks(path, nodeId, chunks, contentHash);
 	}
 
 	async close(): Promise<void> {

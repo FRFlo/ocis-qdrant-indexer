@@ -48,17 +48,36 @@ export class QdrantManager {
 		console.log(`[Qdrant] Suppression des vecteurs pour ${path}...`);
 		await this.client.delete(this.collection, {
 			filter: {
-				must: [
-					{
-						key: "path",
-						match: { value: path },
-					},
-				],
+				should: this.pathVariants(path).map((value) => ({
+					key: "path",
+					match: { value },
+				})),
 			},
+			wait: true,
 		});
 	}
 
-	async indexChunks(path: string, nodeId: string, chunks: Chunk[]): Promise<number> {
+	async hasCurrentContentHash(path: string, contentHash: string): Promise<boolean> {
+		const { points } = await this.client.scroll(this.collection, {
+			filter: {
+				should: this.pathVariants(path).map((value) => ({
+					key: "path",
+					match: { value },
+				})),
+			},
+			limit: 1,
+			with_payload: ["content_hash"],
+			with_vector: false,
+		});
+		return points[0]?.payload?.content_hash === contentHash;
+	}
+
+	async indexChunks(
+		path: string,
+		nodeId: string,
+		chunks: Chunk[],
+		contentHash: string,
+	): Promise<number> {
 		if (chunks.length === 0) return 0;
 
 		// Generate all embeddings before changing the current index. A provider
@@ -83,6 +102,7 @@ export class QdrantManager {
 				node_id: nodeId,
 				filename: path.split("/").pop() || "",
 				chunk_index: chunk.chunkIndex,
+				content_hash: contentHash,
 				text: chunk.text,
 				indexed_at: new Date().toISOString(),
 			},
@@ -94,7 +114,10 @@ export class QdrantManager {
 		});
 		await this.client.delete(this.collection, {
 			filter: {
-				must: [{ key: "path", match: { value: path } }],
+				should: this.pathVariants(path).map((value) => ({
+					key: "path",
+					match: { value },
+				})),
 				must_not: [{ has_id: points.map((point) => point.id) }],
 			},
 			wait: true,
@@ -102,6 +125,15 @@ export class QdrantManager {
 
 		console.log(`[Qdrant] ${points.length} chunks indexés avec succès pour ${path}`);
 		return points.length;
+	}
+
+	private pathVariants(path: string): string[] {
+		const canonical = path
+			.replace(/\\/g, "/")
+			.split("/")
+			.filter((segment) => segment && segment !== ".")
+			.join("/");
+		return [...new Set([canonical, `/${canonical}`, `./${canonical}`])];
 	}
 
 	private pointId(path: string, chunkIndex: number): string {

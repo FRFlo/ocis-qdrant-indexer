@@ -5,6 +5,31 @@ export interface ParsedDocument {
 	title?: string;
 }
 
+const supportedExtensions = new Set([
+	"txt",
+	"md",
+	"markdown",
+	"json",
+	"yaml",
+	"yml",
+	"csv",
+	"html",
+	"xml",
+	"js",
+	"ts",
+	"py",
+	"java",
+	"c",
+	"cpp",
+	"puml",
+	"pdf",
+]);
+
+export function isSupportedFile(filename: string): boolean {
+	const ext = filename.split(".").pop()?.toLowerCase() || "";
+	return supportedExtensions.has(ext);
+}
+
 export async function extractText(filename: string, buffer: Buffer): Promise<ParsedDocument> {
 	const ext = filename.split(".").pop()?.toLowerCase() || "";
 
@@ -16,26 +41,7 @@ export async function extractText(filename: string, buffer: Buffer): Promise<Par
 		};
 	}
 
-	if (
-		[
-			"txt",
-			"md",
-			"markdown",
-			"json",
-			"yaml",
-			"yml",
-			"csv",
-			"html",
-			"xml",
-			"js",
-			"ts",
-			"py",
-			"java",
-			"c",
-			"cpp",
-			"puml",
-		].includes(ext)
-	) {
+	if (supportedExtensions.has(ext) && ext !== "pdf") {
 		return {
 			text: buffer.toString("utf-8"),
 			title: filename,

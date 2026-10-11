@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { chunkText, extractText } from "./parser.ts";
+import { chunkText, extractText, isSupportedFile } from "./parser.ts";
 
 describe("parser", () => {
 	it("découpe un texte correctement selon les paragraphes et la taille", () => {
@@ -21,5 +21,11 @@ Troisième paragraphe de conclusion.`;
 
 		expect(parsed.title).toBe("cours.md");
 		expect(parsed.text).toContain("Titre du cours");
+	});
+
+	it("identifies only formats supported by the indexer", () => {
+		expect(isSupportedFile("Cours.PDF")).toBe(true);
+		expect(isSupportedFile("notes.md")).toBe(true);
+		expect(isSupportedFile("archive.zip")).toBe(false);
 	});
 });

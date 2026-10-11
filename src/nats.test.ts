@@ -9,6 +9,7 @@ describe("NatsConsumer", () => {
 			downloadFile: mock(async () => Buffer.from("content")),
 		} as unknown as OcisClient;
 		const qdrant = {
+			hasCurrentContentHash: mock(async () => false),
 			indexChunks: mock(async () => {
 				throw new Error("temporary Qdrant failure");
 			}),
@@ -35,7 +36,7 @@ describe("NatsConsumer", () => {
 			ID: { opaque_id: "node-1" },
 		});
 
-		expect(qdrant.deleteFileVectors).toHaveBeenCalledWith("/personal/document.md");
+		expect(qdrant.deleteFileVectors).toHaveBeenCalledWith("personal/document.md");
 	});
 
 	it("indexes synchronous FileUploaded events from Ref.path", async () => {
@@ -43,6 +44,7 @@ describe("NatsConsumer", () => {
 			downloadFile: mock(async () => Buffer.from("plain text")),
 		} as unknown as OcisClient;
 		const qdrant = {
+			hasCurrentContentHash: mock(async () => false),
 			indexChunks: mock(async () => 1),
 		} as unknown as QdrantManager;
 		const consumer = new NatsConsumer(qdrant, ocis);
@@ -51,8 +53,26 @@ describe("NatsConsumer", () => {
 			Ref: { path: "/personal/document.md" },
 		});
 
-		expect(ocis.downloadFile).toHaveBeenCalledWith("/personal/document.md");
+		expect(ocis.downloadFile).toHaveBeenCalledWith("personal/document.md");
 		expect(qdrant.indexChunks).toHaveBeenCalled();
+	});
+
+	it("skips embedding generation when a file hash is already indexed", async () => {
+		const ocis = {
+			downloadFile: mock(async () => Buffer.from("unchanged")),
+		} as unknown as OcisClient;
+		const qdrant = {
+			hasCurrentContentHash: mock(async () => true),
+			indexChunks: mock(async () => 0),
+		} as unknown as QdrantManager;
+		const consumer = new NatsConsumer(qdrant, ocis);
+
+		await consumer.handleEvent("events.UploadReady", {
+			FileRef: { path: "document.md" },
+		});
+
+		expect(ocis.downloadFile).toHaveBeenCalledWith("document.md");
+		expect(qdrant.indexChunks).not.toHaveBeenCalled();
 	});
 
 	it("ignores failed UploadReady events", async () => {
