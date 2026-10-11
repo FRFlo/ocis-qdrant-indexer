@@ -4,7 +4,7 @@ import type { OcisClient } from "./ocis.ts";
 import type { QdrantManager } from "./qdrant.ts";
 
 describe("NatsConsumer", () => {
-	it("propagates indexing errors so the message can be retried", async () => {
+	it("indexes official oCIS UploadReady payloads and propagates failures", async () => {
 		const ocis = {
 			downloadFile: mock(async () => Buffer.from("content")),
 		} as unknown as OcisClient;
@@ -16,19 +16,67 @@ describe("NatsConsumer", () => {
 		const consumer = new NatsConsumer(qdrant, ocis);
 
 		await expect(
-			consumer.handleEvent("storage.events.UploadReady", {
-				FileRef: { Path: "document.md" },
+			consumer.handleEvent("events.UploadReady", {
+				FileRef: { path: "document.md", resource_id: { opaque_id: "node-1" } },
 			}),
 		).rejects.toThrow("temporary Qdrant failure");
 		expect(ocis.downloadFile).toHaveBeenCalledWith("document.md");
 	});
 
-	it("ignores events without a file path", async () => {
+	it("purges vectors for official oCIS trash events", async () => {
+		const ocis = { downloadFile: mock(async () => Buffer.from("")) } as unknown as OcisClient;
+		const qdrant = {
+			deleteFileVectors: mock(async () => undefined),
+		} as unknown as QdrantManager;
+		const consumer = new NatsConsumer(qdrant, ocis);
+
+		await consumer.handleEvent("events.ItemTrashed", {
+			Ref: { path: "/personal/document.md" },
+			ID: { opaque_id: "node-1" },
+		});
+
+		expect(qdrant.deleteFileVectors).toHaveBeenCalledWith("/personal/document.md");
+	});
+
+	it("indexes synchronous FileUploaded events from Ref.path", async () => {
+		const ocis = {
+			downloadFile: mock(async () => Buffer.from("plain text")),
+		} as unknown as OcisClient;
+		const qdrant = {
+			indexChunks: mock(async () => 1),
+		} as unknown as QdrantManager;
+		const consumer = new NatsConsumer(qdrant, ocis);
+
+		await consumer.handleEvent("events.FileUploaded", {
+			Ref: { path: "/personal/document.md" },
+		});
+
+		expect(ocis.downloadFile).toHaveBeenCalledWith("/personal/document.md");
+		expect(qdrant.indexChunks).toHaveBeenCalled();
+	});
+
+	it("ignores failed UploadReady events", async () => {
 		const ocis = { downloadFile: mock(async () => Buffer.from("")) } as unknown as OcisClient;
 		const qdrant = { indexChunks: mock(async () => 0) } as unknown as QdrantManager;
 		const consumer = new NatsConsumer(qdrant, ocis);
 
-		await expect(consumer.handleEvent("storage.events.UploadReady", {})).resolves.toBeUndefined();
+		await consumer.handleEvent("events.UploadReady", {
+			FileRef: { path: "/personal/document.md" },
+			Failed: true,
+		});
+
+		expect(ocis.downloadFile).not.toHaveBeenCalled();
+	});
+
+	it("ignores events without a file reference path", async () => {
+		const ocis = { downloadFile: mock(async () => Buffer.from("")) } as unknown as OcisClient;
+		const qdrant = {
+			indexChunks: mock(async () => 0),
+			deleteFileVectors: mock(async () => undefined),
+		} as unknown as QdrantManager;
+		const consumer = new NatsConsumer(qdrant, ocis);
+
+		await expect(consumer.handleEvent("events.UploadReady", {})).resolves.toBeUndefined();
 		expect(ocis.downloadFile).not.toHaveBeenCalled();
 	});
 });

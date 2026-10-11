@@ -11,20 +11,41 @@ import { chunkText, extractText } from "./parser.ts";
 import type { QdrantManager } from "./qdrant.ts";
 
 export interface OcisEvent {
+	Ref?: {
+		Path?: string;
+		path?: string;
+		ResourceId?: OcisResourceId;
+		resource_id?: OcisResourceId;
+	};
 	FileRef?: {
 		Path?: string;
-		ResourceId?: {
-			SpaceId?: string;
-			OpaqueId?: string;
-		};
+		path?: string;
+		ResourceId?: OcisResourceId;
+		resource_id?: OcisResourceId;
 	};
-	ResourceID?: {
-		SpaceId?: string;
-		OpaqueId?: string;
-	};
+	ResourceID?: OcisResourceId;
+	ID?: OcisResourceId;
+	id?: OcisResourceId;
+	Failed?: boolean;
 	Timestamp?: string;
 	[key: string]: unknown;
 }
+
+interface OcisResourceId {
+	SpaceId?: string;
+	OpaqueId?: string;
+	space_id?: string;
+	opaque_id?: string;
+}
+
+interface OcisBusMessage {
+	Metadata?: Record<string, string>;
+	Payload?: string | number[];
+}
+
+const OCIS_STREAM = "main-queue";
+const OCIS_SUBJECT = "main-queue";
+const EVENT_TYPE_METADATA = "eventtype";
 
 export class NatsConsumer {
 	private nc?: NatsConnection;
@@ -45,7 +66,7 @@ export class NatsConsumer {
 
 			const js = this.nc.jetstream();
 			const jsm = await js.jetstreamManager();
-			const eventSubject = "*.events.*";
+			const eventSubject = OCIS_SUBJECT;
 			let stream: string;
 			try {
 				stream = await jsm.streams.find(eventSubject);
@@ -59,7 +80,7 @@ export class NatsConsumer {
 					: "Aucun stream JetStream n'est configuré.";
 				throw new Error(
 					`Aucun stream JetStream ne correspond au sujet ${eventSubject}. ${details} ` +
-						"Vérifiez que JetStream est activé dans oCIS et que le stream inclut les sujets d'événements oCIS.",
+						`oCIS publie ses événements sur ${OCIS_STREAM}. Vérifiez que le stream existe et capture ce sujet.`,
 					{ cause: err },
 				);
 			}
@@ -70,7 +91,7 @@ export class NatsConsumer {
 			} catch {
 				await jsm.consumers.add(stream, {
 					durable_name: durable,
-					filter_subject: "*.events.*",
+					filter_subject: OCIS_SUBJECT,
 					deliver_policy: DeliverPolicy.All,
 					ack_policy: AckPolicy.Explicit,
 					ack_wait: 30_000_000_000,
@@ -83,11 +104,18 @@ export class NatsConsumer {
 			(async () => {
 				for await (const m of this.messages!) {
 					try {
-						const eventName = m.subject;
-						const rawData = m.data.toString();
+						const busMessage: OcisBusMessage = JSON.parse(m.data.toString());
+						const eventName = busMessage.Metadata?.[EVENT_TYPE_METADATA];
+						if (!eventName || busMessage.Payload === undefined) {
+							throw new Error("Message oCIS invalide : eventtype ou payload manquant.");
+						}
+						const rawData =
+							typeof busMessage.Payload === "string"
+								? Buffer.from(busMessage.Payload, "base64").toString("utf8")
+								: Buffer.from(busMessage.Payload).toString("utf8");
 						const data: OcisEvent = JSON.parse(rawData);
 
-						console.log(`[NATS] Événement reçu [${eventName}]`);
+						console.log(`[NATS] Événement reçu [${eventName}] sur ${m.subject}`);
 						await this.handleEvent(eventName, data);
 						m.ack();
 					} catch (err) {
@@ -108,17 +136,24 @@ export class NatsConsumer {
 	}
 
 	async handleEvent(eventName: string, data: OcisEvent): Promise<void> {
-		const path = data.FileRef?.Path;
-		const nodeId = data.ResourceID?.OpaqueId || data.FileRef?.ResourceId?.OpaqueId || "unknown";
+		const fileRef = data.FileRef ?? data.Ref;
+		const path = fileRef?.Path ?? fileRef?.path;
+		const resourceId = data.ResourceID ?? data.ID ?? data.id;
+		const fileResourceId = fileRef?.ResourceId ?? fileRef?.resource_id;
+		const nodeId =
+			resourceId?.OpaqueId ??
+			resourceId?.opaque_id ??
+			fileResourceId?.OpaqueId ??
+			fileResourceId?.opaque_id ??
+			"unknown";
 
 		if (!path) return;
 
-		// 1. Upload ou modification de fichier
-		if (
-			eventName.includes("UploadReady") ||
-			eventName.includes("upload") ||
-			eventName.includes("postprocessing")
-		) {
+		if (eventName === "events.UploadReady" || eventName === "events.FileUploaded") {
+			if (eventName === "events.UploadReady" && data.Failed) {
+				console.log(`[Indexer] Upload oCIS échoué pour ${path}, ignoré.`);
+				return;
+			}
 			console.log(`[Indexer] Indexation demandée pour ${path} (ID: ${nodeId})`);
 			try {
 				const buffer = await this.ocis.downloadFile(path);
@@ -139,11 +174,7 @@ export class NatsConsumer {
 		}
 
 		// 2. Suppression de fichier (corbeille ou purge définitive)
-		if (
-			eventName.includes("ItemTrashed") ||
-			eventName.includes("ItemPurged") ||
-			eventName.includes("delete")
-		) {
+		if (eventName === "events.ItemTrashed" || eventName === "events.ItemPurged") {
 			console.log(`[Indexer] Fichier supprimé dans oCIS, purge des vecteurs: ${path}`);
 			try {
 				await this.qdrant.deleteFileVectors(path);

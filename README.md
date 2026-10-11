@@ -10,7 +10,7 @@ Sidecar temps réel d'ingestion et de recherche sémantique (RAG) pour **ownClou
 │                                                             │
 │   ownCloud (oCIS)                                           │
 │       │                                                     │
-│       │ (Événements NATS JetStream : UploadReady, Delete)   │
+│       │ (Événements oCIS sur le stream JetStream main-queue)│
 │       ▼                                                     │
 │   [ocis-qdrant-indexer] (Ce sidecar)                        │
 │       ├── 1. Télécharge le document via WebDAV              │
@@ -27,7 +27,7 @@ Sidecar temps réel d'ingestion et de recherche sémantique (RAG) pour **ownClou
 
 ## Fonctionnalités
 
-- **Événementiel & Temps réel :** Écoute directement le bus NATS JetStream d'oCIS (`*.events.*`). Aucun polling ou cron requis.
+- **Événementiel & Temps réel :** Consomme le stream NATS JetStream `main-queue` utilisé par oCIS. Les événements métier (`events.UploadReady`, `events.FileUploaded`, `events.ItemTrashed`, `events.ItemPurged`) sont lus depuis les métadonnées du message. Aucun polling ou cron requis.
 - **Upsert propre & Zéro doublon :** Lorsqu'un fichier est modifié dans ownCloud, ses anciens vecteurs sont supprimés avant de réinsérer les nouveaux. En cas de suppression du fichier (`ItemTrashed` / `ItemPurged`), les vecteurs sont automatiquement purgés.
 - **Embeddings sans coût VPS :** Utilise Cloudflare Workers AI (`@cf/baai/bge-m3`, multilingue, 1024 dimensions) dans la limite du Free Tier quotidien (~9M tokens/jour). Support alternatif pour OpenAI (`text-embedding-3-small`) ou Ollama local.
 - **Serveur MCP Streamable HTTP :** Expose nativement l'outil `search_owncloud_docs` sur `POST /mcp` compatible avec Executor, Claude Desktop et Hermes Agent.
