@@ -180,6 +180,32 @@ describe("NatsConsumer", () => {
 		}
 	});
 
+	it("preserves existing vectors when extraction returns no text", async () => {
+		const originalTikaUrl = config.tikaUrl;
+		config.tikaUrl = undefined;
+		const ocis = {
+			getFileMetadata: mock(async () => ({ webdav_url: "https://owncloud/report.docx" })),
+			downloadFile: mock(async () => Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00])),
+		} as unknown as OcisClient;
+		const qdrant = {
+			hasCurrentContentHash: mock(async () => false),
+			hasIndexedPath: mock(async () => true),
+			indexChunks: mock(async () => 0),
+			deleteFileVectors: mock(async () => undefined),
+		} as unknown as QdrantManager;
+		const consumer = new NatsConsumer(qdrant, ocis, testTokenCounterFactory);
+
+		try {
+			await consumer.handleEvent("events.FileUploaded", {
+				Ref: { path: "report.docx" },
+			});
+			expect(qdrant.deleteFileVectors).not.toHaveBeenCalled();
+			expect(qdrant.indexChunks).not.toHaveBeenCalled();
+		} finally {
+			config.tikaUrl = originalTikaUrl;
+		}
+	});
+
 	it("ignores events without a file reference path", async () => {
 		const ocis = { downloadFile: mock(async () => Buffer.from("")) } as unknown as OcisClient;
 		const qdrant = {

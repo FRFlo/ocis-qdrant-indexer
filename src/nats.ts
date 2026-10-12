@@ -306,9 +306,12 @@ export class NatsConsumer {
 		const filename = path.split("/").pop() || "";
 		const parsed = await extractText(filename, buffer);
 		if (!parsed.text.trim()) {
-			await this.qdrant.deleteFileVectors(path);
-			console.log(`[Indexer] supprimé: ${path}`);
-			return "updated";
+			// An extraction failure (for example, an unsupported/corrupt PDF) is
+			// not evidence that the source document is empty or deleted. Preserve
+			// any existing vectors rather than turning a transient parser issue
+			// into data loss during every startup scan.
+			console.warn(`[Indexer] Extraction vide pour ${path}, index existant conservé.`);
+			return "unchanged";
 		}
 
 		const countTokens = await this.tokenCounterFactory();
