@@ -1,5 +1,7 @@
 FROM oven/bun:1-alpine
 
+RUN apk add --no-cache openjdk21-jre-headless
+
 WORKDIR /app
 
 COPY package.json bun.lock ./

@@ -1,4 +1,7 @@
-import pdfParse from "pdf-parse";
+import { convert } from "@opendataloader/pdf";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export interface ParsedDocument {
 	text: string;
@@ -34,11 +37,19 @@ export async function extractText(filename: string, buffer: Buffer): Promise<Par
 	const ext = filename.split(".").pop()?.toLowerCase() || "";
 
 	if (ext === "pdf") {
-		const data = await pdfParse(buffer);
-		return {
-			text: data.text,
-			title: data.info?.Title || filename,
-		};
+		const workDir = await mkdtemp(join(tmpdir(), "ocis-qdrant-pdf-"));
+		const inputPath = join(workDir, filename.split(/[\\/]/).pop() || "document.pdf");
+		try {
+			await writeFile(inputPath, buffer);
+			const text = await convert(inputPath, {
+				format: "markdown",
+				toStdout: true,
+				quiet: true,
+			});
+			return { text: text.trim(), title: filename };
+		} finally {
+			await rm(workDir, { recursive: true, force: true });
+		}
 	}
 
 	if (supportedExtensions.has(ext) && ext !== "pdf") {
