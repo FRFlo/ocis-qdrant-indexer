@@ -90,6 +90,30 @@ describe("OcisClient", () => {
 		expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "PROPFIND" });
 	});
 
+	it("reads file metadata from WebDAV properties", async () => {
+		config.ocisWebdavUrl = "https://owncloud.example/dav/spaces/test-space/";
+		globalThis.fetch = mock(
+			async () =>
+				new Response(`<d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop>
+				<d:getlastmodified>Wed, 01 Jan 2025 12:00:00 GMT</d:getlastmodified>
+				<d:creationdate>2025-01-01T10:00:00Z</d:creationdate>
+				<d:getcontentlength>42</d:getcontentlength>
+				<d:getcontenttype>text/markdown</d:getcontenttype>
+				<d:getetag>"etag-1"</d:getetag>
+			</d:prop></d:propstat></d:response></d:multistatus>`),
+		) as unknown as typeof fetch;
+		const client = new OcisClient();
+
+		await expect(client.getFileMetadata("notes/page.md")).resolves.toMatchObject({
+			webdav_url: "https://owncloud.example/dav/spaces/test-space/notes/page.md",
+			last_modified: "Wed, 01 Jan 2025 12:00:00 GMT",
+			created_at: "2025-01-01T10:00:00Z",
+			size_bytes: 42,
+			content_type: "text/markdown",
+			etag: '"etag-1"',
+		});
+	});
+
 	it("rejects traversal and files exceeding the configured limit", async () => {
 		const fetchMock = mock(
 			async (_input: string | URL) =>

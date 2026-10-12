@@ -15,15 +15,14 @@ describe("NatsConsumer", () => {
 		} as unknown as OcisClient;
 		const consumer = new NatsConsumer({} as QdrantManager, ocis);
 
-		await (
-			consumer as unknown as { indexExistingFiles: () => Promise<void> }
-		).indexExistingFiles();
+		await (consumer as unknown as { indexExistingFiles: () => Promise<void> }).indexExistingFiles();
 
 		expect(ocis.listFiles).toHaveBeenCalledTimes(2);
 	});
 
 	it("indexes official oCIS UploadReady payloads and propagates failures", async () => {
 		const ocis = {
+			getFileMetadata: mock(async () => ({ webdav_url: "https://owncloud/document.md" })),
 			downloadFile: mock(async () => Buffer.from("content")),
 		} as unknown as OcisClient;
 		const qdrant = {
@@ -59,6 +58,7 @@ describe("NatsConsumer", () => {
 
 	it("indexes synchronous FileUploaded events from Ref.path", async () => {
 		const ocis = {
+			getFileMetadata: mock(async () => ({ webdav_url: "https://owncloud/document.md" })),
 			downloadFile: mock(async () => Buffer.from("plain text")),
 		} as unknown as OcisClient;
 		const qdrant = {
@@ -77,6 +77,7 @@ describe("NatsConsumer", () => {
 
 	it("skips embedding generation when a file hash is already indexed", async () => {
 		const ocis = {
+			getFileMetadata: mock(async () => ({ webdav_url: "https://owncloud/document.md" })),
 			downloadFile: mock(async () => Buffer.from("unchanged")),
 		} as unknown as OcisClient;
 		const qdrant = {

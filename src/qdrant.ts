@@ -1,6 +1,7 @@
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { config } from "./config.ts";
 import type { Embedder } from "./embedder.ts";
+import type { OcisFileMetadata } from "./ocis.ts";
 import type { Chunk } from "./parser.ts";
 
 export class QdrantManager {
@@ -77,6 +78,7 @@ export class QdrantManager {
 		nodeId: string,
 		chunks: Chunk[],
 		contentHash: string,
+		metadata: OcisFileMetadata = { webdav_url: "" },
 	): Promise<number> {
 		if (chunks.length === 0) return 0;
 
@@ -103,6 +105,7 @@ export class QdrantManager {
 				filename: path.split("/").pop() || "",
 				chunk_index: chunk.chunkIndex,
 				content_hash: contentHash,
+				...metadata,
 				text: chunk.text,
 				indexed_at: new Date().toISOString(),
 			},
@@ -177,6 +180,12 @@ export class QdrantManager {
 			filename: r.payload?.filename as string,
 			text: r.payload?.text as string,
 			chunkIndex: r.payload?.chunk_index as number,
+			webdavUrl: r.payload?.webdav_url as string,
+			lastModified: r.payload?.last_modified as string | undefined,
+			createdAt: r.payload?.created_at as string | undefined,
+			sizeBytes: r.payload?.size_bytes as number | undefined,
+			contentType: r.payload?.content_type as string | undefined,
+			etag: r.payload?.etag as string | undefined,
 		}));
 	}
 }

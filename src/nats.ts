@@ -246,6 +246,7 @@ export class NatsConsumer {
 	}
 
 	private async indexFileIfChanged(path: string, nodeId: string): Promise<void> {
+		const metadata = await this.ocis.getFileMetadata(path);
 		const buffer = await this.ocis.downloadFile(path);
 		const contentHash = createHash("sha256").update(buffer).digest("hex");
 		if (await this.qdrant.hasCurrentContentHash(path, contentHash)) {
@@ -264,7 +265,7 @@ export class NatsConsumer {
 		}
 
 		const chunks = chunkText(parsed.text);
-		await this.qdrant.indexChunks(path, nodeId, chunks, contentHash);
+		await this.qdrant.indexChunks(path, nodeId, chunks, contentHash, metadata);
 	}
 
 	async close(): Promise<void> {

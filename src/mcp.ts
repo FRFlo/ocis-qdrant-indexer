@@ -57,7 +57,9 @@ export function createMcpServer(qdrant: QdrantManager) {
 					const formatted = results
 						.map(
 							(r, i) =>
-								`### [${i + 1}] Source: ${r.path} (Score: ${r.score.toFixed(3)})\n${r.text}\n`,
+								`### [${i + 1}] Source: ${r.path} (Score: ${r.score.toFixed(3)})\n` +
+								`ownCloud: ${r.webdavUrl || "URL indisponible"}\n` +
+								`Dernière modification: ${r.lastModified || "inconnue"} | Taille: ${r.sizeBytes ?? "inconnue"} octets\n\n${r.text}\n`,
 						)
 						.join("\n---\n\n");
 

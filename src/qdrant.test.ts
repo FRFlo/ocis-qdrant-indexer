@@ -15,6 +15,10 @@ describe("QdrantManager", () => {
 				request: { points: Array<{ payload: Record<string, unknown> }> },
 			) => {
 				expect(request.points[0]?.payload.content_hash).toBe("content-sha");
+				expect(request.points[0]?.payload.webdav_url).toBe(
+					"https://owncloud.example/dav/spaces/space/notes/page.md",
+				);
+				expect(request.points[0]?.payload.last_modified).toBe("Wed, 01 Jan 2025 12:00:00 GMT");
 			},
 		);
 		manager.client = {
@@ -27,6 +31,10 @@ describe("QdrantManager", () => {
 			"node-1",
 			[{ text: "content", chunkIndex: 0 }],
 			"content-sha",
+			{
+				webdav_url: "https://owncloud.example/dav/spaces/space/notes/page.md",
+				last_modified: "Wed, 01 Jan 2025 12:00:00 GMT",
+			},
 		);
 
 		expect(upsert).toHaveBeenCalledTimes(1);

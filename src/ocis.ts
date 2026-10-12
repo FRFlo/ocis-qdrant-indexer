@@ -1,5 +1,14 @@
 import { config } from "./config.ts";
 
+export interface OcisFileMetadata {
+	webdav_url: string;
+	last_modified?: string;
+	created_at?: string;
+	size_bytes?: number;
+	content_type?: string;
+	etag?: string;
+}
+
 export class OcisClient {
 	private baseUrl: string;
 	private authHeader: string;
@@ -152,6 +161,36 @@ export class OcisClient {
 			chunks.map((chunk) => Buffer.from(chunk)),
 			totalBytes,
 		);
+	}
+
+	async getFileMetadata(path: string): Promise<OcisFileMetadata> {
+		const url = this.fileUrl(path);
+		const body =
+			'<?xml version="1.0" encoding="utf-8" ?>' +
+			'<d:propfind xmlns:d="DAV:"><d:prop><d:getlastmodified/><d:creationdate/><d:getcontentlength/><d:getcontenttype/><d:getetag/></d:prop></d:propfind>';
+		const res = await this.fetchWebdav(url, {
+			method: "PROPFIND",
+			headers: {
+				...this.authHeaders(),
+				Depth: "0",
+				"Content-Type": "application/xml; charset=utf-8",
+			},
+			body,
+			signal: AbortSignal.timeout(config.ocisRequestTimeoutMs),
+		});
+		if (!res.ok) {
+			throw new Error(this.webdavError("de la lecture des métadonnées", res, path));
+		}
+		const xml = await res.text();
+		const contentLength = Number(this.xmlTag(xml, "getcontentlength"));
+		return {
+			webdav_url: url,
+			last_modified: this.decodeXml(this.xmlTag(xml, "getlastmodified") || "") || undefined,
+			created_at: this.decodeXml(this.xmlTag(xml, "creationdate") || "") || undefined,
+			size_bytes: Number.isFinite(contentLength) && contentLength >= 0 ? contentLength : undefined,
+			content_type: this.decodeXml(this.xmlTag(xml, "getcontenttype") || "") || undefined,
+			etag: this.decodeXml(this.xmlTag(xml, "getetag") || "") || undefined,
+		};
 	}
 
 	private fileUrl(path: string): string {
