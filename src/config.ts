@@ -12,6 +12,9 @@ export interface Config {
 	tikaUrl?: string;
 	embeddingProvider: "cloudflare" | "openai" | "ollama";
 	embeddingMaxTokens: number;
+	embeddingTokenizerModel?: string;
+	embeddingTokenizerRevision?: string;
+	embeddingTokenizerCacheDir?: string;
 	cloudflareAccountId?: string;
 	cloudflareApiToken?: string;
 	cloudflareModel: string;
@@ -73,6 +76,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 		tikaUrl: env.TIKA_URL?.replace(/\/+$/, "") || undefined,
 		embeddingProvider: provider as Config["embeddingProvider"],
 		embeddingMaxTokens,
+		embeddingTokenizerModel: env.EMBEDDING_TOKENIZER_MODEL?.trim() || undefined,
+		embeddingTokenizerRevision: env.EMBEDDING_TOKENIZER_REVISION?.trim() || undefined,
+		embeddingTokenizerCacheDir: env.EMBEDDING_TOKENIZER_CACHE_DIR?.trim() || undefined,
 		cloudflareAccountId: env.CLOUDFLARE_ACCOUNT_ID,
 		cloudflareApiToken: env.CLOUDFLARE_API_TOKEN,
 		cloudflareModel: env.CLOUDFLARE_MODEL || "@cf/baai/bge-m3",

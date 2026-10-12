@@ -4,6 +4,8 @@ import { NatsConsumer } from "./nats.ts";
 import type { OcisClient } from "./ocis.ts";
 import type { QdrantManager } from "./qdrant.ts";
 
+const testTokenCounterFactory = async () => (text: string) => Array.from(text).length;
+
 describe("NatsConsumer", () => {
 	it("retries the initial WebDAV scan after a connection refusal", async () => {
 		let attempts = 0;
@@ -14,7 +16,7 @@ describe("NatsConsumer", () => {
 				return [];
 			}),
 		} as unknown as OcisClient;
-		const consumer = new NatsConsumer({} as QdrantManager, ocis);
+		const consumer = new NatsConsumer({} as QdrantManager, ocis, testTokenCounterFactory);
 
 		await (consumer as unknown as { indexExistingFiles: () => Promise<void> }).indexExistingFiles();
 
@@ -32,7 +34,7 @@ describe("NatsConsumer", () => {
 				throw new Error("temporary Qdrant failure");
 			}),
 		} as unknown as QdrantManager;
-		const consumer = new NatsConsumer(qdrant, ocis);
+		const consumer = new NatsConsumer(qdrant, ocis, testTokenCounterFactory);
 
 		await expect(
 			consumer.handleEvent("events.UploadReady", {
@@ -47,7 +49,7 @@ describe("NatsConsumer", () => {
 		const qdrant = {
 			deleteFileVectors: mock(async () => undefined),
 		} as unknown as QdrantManager;
-		const consumer = new NatsConsumer(qdrant, ocis);
+		const consumer = new NatsConsumer(qdrant, ocis, testTokenCounterFactory);
 
 		await consumer.handleEvent("events.ItemTrashed", {
 			Ref: { path: "/personal/document.md" },
@@ -66,7 +68,7 @@ describe("NatsConsumer", () => {
 			hasCurrentContentHash: mock(async () => false),
 			indexChunks: mock(async () => 1),
 		} as unknown as QdrantManager;
-		const consumer = new NatsConsumer(qdrant, ocis);
+		const consumer = new NatsConsumer(qdrant, ocis, testTokenCounterFactory);
 
 		await consumer.handleEvent("events.FileUploaded", {
 			Ref: { path: "/personal/document.md" },
@@ -85,7 +87,7 @@ describe("NatsConsumer", () => {
 			hasCurrentContentHash: mock(async () => true),
 			indexChunks: mock(async () => 0),
 		} as unknown as QdrantManager;
-		const consumer = new NatsConsumer(qdrant, ocis);
+		const consumer = new NatsConsumer(qdrant, ocis, testTokenCounterFactory);
 
 		await consumer.handleEvent("events.UploadReady", {
 			FileRef: { path: "document.md" },
@@ -98,7 +100,7 @@ describe("NatsConsumer", () => {
 	it("ignores failed UploadReady events", async () => {
 		const ocis = { downloadFile: mock(async () => Buffer.from("")) } as unknown as OcisClient;
 		const qdrant = { indexChunks: mock(async () => 0) } as unknown as QdrantManager;
-		const consumer = new NatsConsumer(qdrant, ocis);
+		const consumer = new NatsConsumer(qdrant, ocis, testTokenCounterFactory);
 
 		await consumer.handleEvent("events.UploadReady", {
 			FileRef: { path: "/personal/document.md" },
@@ -120,7 +122,7 @@ describe("NatsConsumer", () => {
 			indexChunks: mock(async () => 0),
 			deleteFileVectors: mock(async () => undefined),
 		} as unknown as QdrantManager;
-		const consumer = new NatsConsumer(qdrant, ocis);
+		const consumer = new NatsConsumer(qdrant, ocis, testTokenCounterFactory);
 
 		try {
 			await consumer.handleEvent("events.FileUploaded", {
@@ -139,7 +141,7 @@ describe("NatsConsumer", () => {
 			indexChunks: mock(async () => 0),
 			deleteFileVectors: mock(async () => undefined),
 		} as unknown as QdrantManager;
-		const consumer = new NatsConsumer(qdrant, ocis);
+		const consumer = new NatsConsumer(qdrant, ocis, testTokenCounterFactory);
 
 		await expect(consumer.handleEvent("events.UploadReady", {})).resolves.toBeUndefined();
 		expect(ocis.downloadFile).not.toHaveBeenCalled();

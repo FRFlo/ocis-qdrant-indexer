@@ -23,6 +23,17 @@ describe("loadConfig", () => {
 		expect(() => loadConfig({ EMBEDDING_MAX_TOKENS: "3" })).toThrow("au moins égal à 4");
 	});
 
+	it("accepts an explicit Hugging Face tokenizer and cache location", () => {
+		const config = loadConfig({
+			EMBEDDING_TOKENIZER_MODEL: " org/model ",
+			EMBEDDING_TOKENIZER_REVISION: " revision ",
+			EMBEDDING_TOKENIZER_CACHE_DIR: "/tmp/tokenizers",
+		});
+		expect(config.embeddingTokenizerModel).toBe("org/model");
+		expect(config.embeddingTokenizerRevision).toBe("revision");
+		expect(config.embeddingTokenizerCacheDir).toBe("/tmp/tokenizers");
+	});
+
 	it("accepts an optional Tika server URL", () => {
 		expect(loadConfig({ TIKA_URL: "http://tika:9998/" }).tikaUrl).toBe("http://tika:9998");
 		expect(loadConfig({}).tikaUrl).toBeUndefined();

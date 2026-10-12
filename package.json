@@ -33,9 +33,11 @@
 		"check": "oxfmt --check && oxlint && bun test"
 	},
 	"dependencies": {
+		"@huggingface/tokenizers": "^0.2.0",
 		"@modelcontextprotocol/sdk": "^1.6.1",
 		"@opendataloader/pdf": "^2.5.12",
 		"@qdrant/js-client-rest": "^1.13.0",
+		"js-tiktoken": "^1.0.21",
 		"nats": "^2.29.2",
 		"remark-gfm": "^4.0.1",
 		"remark-parse": "^11.0.0",

@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { config } from "./config.ts";
+import type { TokenCounter } from "./tokenizer.ts";
 
 export interface ParsedDocument {
 	text: string;
@@ -147,30 +148,44 @@ function parseMarkdownTree(text: string): MarkdownNode[] {
 	return roots;
 }
 
-function byteLength(text: string): number {
-	// The UTF-8 byte ceiling is a conservative, tokenizer-independent proxy for input tokens.
-	return Buffer.byteLength(text, "utf8");
+function splitOversizedWord(word: string, maxTokens: number, countTokens: TokenCounter): string[] {
+	const characters = Array.from(word);
+	const chunks: string[] = [];
+	let start = 0;
+	while (start < characters.length) {
+		let low = start + 1;
+		let high = characters.length;
+		let best = start;
+		while (low <= high) {
+			const middle = Math.floor((low + high) / 2);
+			const candidate = characters.slice(start, middle).join("");
+			if (countTokens(candidate) <= maxTokens) {
+				best = middle;
+				low = middle + 1;
+			} else {
+				high = middle - 1;
+			}
+		}
+		if (best === start) best = start + 1;
+		chunks.push(characters.slice(start, best).join(""));
+		start = best;
+	}
+	return chunks;
 }
 
-function splitWords(text: string, maxBytes: number): string[] {
+function splitWords(text: string, maxTokens: number, countTokens: TokenCounter): string[] {
 	const chunks: string[] = [];
 	let current = "";
 	for (const word of text.split(/(\s+)/u).filter(Boolean)) {
-		if (byteLength(word) > maxBytes) {
+		if (countTokens(word) > maxTokens) {
 			if (current.trim()) chunks.push(current.trim());
 			current = "";
-			let part = "";
-			for (const character of Array.from(word)) {
-				if (part && byteLength(part + character) > maxBytes) {
-					chunks.push(part);
-					part = "";
-				}
-				part += character;
-			}
-			if (part) current = part;
+			const parts = splitOversizedWord(word, maxTokens, countTokens);
+			chunks.push(...parts.slice(0, -1));
+			current = parts.at(-1) ?? "";
 			continue;
 		}
-		if (current && byteLength(current + word) > maxBytes) {
+		if (current && countTokens(current + word) > maxTokens) {
 			chunks.push(current.trim());
 			current = word.trimStart();
 		} else {
@@ -181,7 +196,7 @@ function splitWords(text: string, maxBytes: number): string[] {
 	return chunks;
 }
 
-function splitSentences(text: string, maxBytes: number): string[] {
+function splitSentences(text: string, maxTokens: number, countTokens: TokenCounter): string[] {
 	const sentences = text
 		.split(/(?<=[.!?。！？])\s+/u)
 		.map((sentence) => sentence.trim())
@@ -189,9 +204,10 @@ function splitSentences(text: string, maxBytes: number): string[] {
 	const chunks: string[] = [];
 	let current = "";
 	for (const sentence of sentences) {
-		const parts = byteLength(sentence) > maxBytes ? splitWords(sentence, maxBytes) : [sentence];
+		const parts =
+			countTokens(sentence) > maxTokens ? splitWords(sentence, maxTokens, countTokens) : [sentence];
 		for (const part of parts) {
-			if (current && byteLength(`${current} ${part}`) > maxBytes) {
+			if (current && countTokens(`${current} ${part}`) > maxTokens) {
 				chunks.push(current);
 				current = part;
 			} else {
@@ -203,7 +219,7 @@ function splitSentences(text: string, maxBytes: number): string[] {
 	return chunks;
 }
 
-function splitCode(text: string, maxBytes: number): string[] {
+function splitCode(text: string, maxTokens: number, countTokens: TokenCounter): string[] {
 	const lines = text.split("\n");
 	const opening = lines[0] ?? "```";
 	const hasFence = /^\s{0,3}(`{3,}|~{3,})/.test(opening);
@@ -217,15 +233,16 @@ function splitCode(text: string, maxBytes: number): string[] {
 				: "";
 	if (hasFence) lines.shift();
 	const wrapper = hasFence ? `${opening}\n\n${closing}` : "";
-	const bodyBudget = maxBytes - byteLength(wrapper);
-	if (bodyBudget < 1) return splitSentences(text, maxBytes);
+	const bodyBudget = maxTokens - countTokens(wrapper);
+	if (bodyBudget < 1) return splitSentences(text, maxTokens, countTokens);
 
 	const chunks: string[] = [];
 	let current = "";
 	for (const line of lines) {
-		const parts = byteLength(line) > bodyBudget ? splitSentences(line, bodyBudget) : [line];
+		const parts =
+			countTokens(line) > bodyBudget ? splitSentences(line, bodyBudget, countTokens) : [line];
 		for (const part of parts) {
-			if (current && byteLength(`${current}\n${part}`) > bodyBudget) {
+			if (current && countTokens(`${current}\n${part}`) > bodyBudget) {
 				chunks.push(hasFence ? `${opening}\n${current}\n${closing}` : current);
 				current = part;
 			} else {
@@ -237,12 +254,12 @@ function splitCode(text: string, maxBytes: number): string[] {
 	return chunks;
 }
 
-function splitTable(text: string, maxBytes: number): string[] {
+function splitTable(text: string, maxTokens: number, countTokens: TokenCounter): string[] {
 	const lines = text.split("\n");
-	if (lines.length < 3) return splitSentences(text, maxBytes);
+	if (lines.length < 3) return splitSentences(text, maxTokens, countTokens);
 	const header = lines.slice(0, 2).join("\n");
-	const rowBudget = maxBytes - byteLength(`${header}\n\n`);
-	if (rowBudget < 1) return splitSentences(text, maxBytes);
+	const rowBudget = maxTokens - countTokens(`${header}\n\n`);
+	if (rowBudget < 1) return splitSentences(text, maxTokens, countTokens);
 
 	const chunks: string[] = [];
 	let rows: string[] = [];
@@ -251,58 +268,74 @@ function splitTable(text: string, maxBytes: number): string[] {
 		rows = [];
 	};
 	for (const row of lines.slice(2)) {
-		if (byteLength(row) > rowBudget) {
+		if (countTokens(row) > rowBudget) {
 			flush();
-			for (const part of splitSentences(row, rowBudget)) chunks.push(`${header}\n${part}`);
+			for (const part of splitSentences(row, rowBudget, countTokens))
+				chunks.push(`${header}\n${part}`);
 			continue;
 		}
-		if (rows.length && byteLength([...rows, row].join("\n")) > rowBudget) flush();
+		if (rows.length && countTokens([...rows, row].join("\n")) > rowBudget) flush();
 		rows.push(row);
 	}
 	flush();
-	return chunks.length ? chunks : splitSentences(text, maxBytes);
+	return chunks.length ? chunks : splitSentences(text, maxTokens, countTokens);
 }
 
-function splitBlock(text: string, kind: string, maxBytes: number): string[] {
-	if (byteLength(text) <= maxBytes) return [text];
-	if (kind === "code") return splitCode(text, maxBytes);
-	if (kind === "table") return splitTable(text, maxBytes);
+function splitBlock(
+	text: string,
+	kind: string,
+	maxTokens: number,
+	countTokens: TokenCounter,
+): string[] {
+	if (countTokens(text) <= maxTokens) return [text];
+	if (kind === "code") return splitCode(text, maxTokens, countTokens);
+	if (kind === "table") return splitTable(text, maxTokens, countTokens);
 	if (kind === "list") {
 		return text
 			.split("\n")
-			.flatMap((line) => splitSentences(line, maxBytes))
+			.flatMap((line) => splitSentences(line, maxTokens, countTokens))
 			.filter(Boolean);
 	}
 	return text
 		.split(/\n+/)
-		.flatMap((line) => splitSentences(line, maxBytes))
+		.flatMap((line) => splitSentences(line, maxTokens, countTokens))
 		.filter(Boolean);
 }
 
-function truncateUtf8(text: string, maxBytes: number): string {
+function truncateTokens(text: string, maxTokens: number, countTokens: TokenCounter): string {
 	let result = "";
 	for (const character of Array.from(text)) {
-		if (byteLength(result + character) > maxBytes) break;
-		result += character;
+		const candidate = result + character;
+		if (countTokens(candidate) <= maxTokens) result = candidate;
 	}
 	return result;
 }
 
-function fitHeadingPath(headings: string[], maxBytes: number): string[] {
+function fitHeadingPath(
+	headings: string[],
+	maxTokens: number,
+	countTokens: TokenCounter,
+): string[] {
 	if (!headings.length) return headings;
 	const fullPath = headings.join("\n\n");
-	if (byteLength(fullPath) + 2 <= maxBytes * 0.5) return headings;
+	if (countTokens(fullPath) <= maxTokens * 0.5) return headings;
 
-	const allowance = Math.max(0, Math.floor(maxBytes * 0.35) - 2 * (headings.length - 1));
+	const allowance = Math.max(0, Math.floor(maxTokens * 0.35) - 2 * (headings.length - 1));
 	const perHeading = Math.floor(allowance / headings.length);
 	if (perHeading < 3)
-		return headings.slice(-1).map((heading) => truncateUtf8(heading, Math.max(1, maxBytes - 4)));
+		return headings
+			.slice(-1)
+			.map((heading) => truncateTokens(heading, Math.max(1, maxTokens - 4), countTokens));
 	return headings.map((heading) => {
-		if (byteLength(heading) <= perHeading) return heading;
+		if (countTokens(heading) <= perHeading) return heading;
 		const marker = heading.match(/^#{1,6}\s/)?.[0] ?? "";
 		const title = heading.slice(marker.length);
-		const titleBytes = Math.max(0, perHeading - byteLength(marker) - byteLength("…"));
-		return `${truncateUtf8(marker, perHeading)}${truncateUtf8(title, titleBytes)}…`;
+		const titleTokens = Math.max(0, perHeading - countTokens(marker) - countTokens("…"));
+		return `${truncateTokens(marker, perHeading, countTokens)}${truncateTokens(
+			title,
+			titleTokens,
+			countTokens,
+		)}…`;
 	});
 }
 
@@ -318,7 +351,11 @@ function flattenMarkdownTree(nodes: MarkdownNode[], headings: string[] = []): Ma
 	return entries;
 }
 
-export function chunkText(text: string, maxChunkTokens = config.embeddingMaxTokens): Chunk[] {
+export function chunkText(
+	text: string,
+	countTokens: TokenCounter,
+	maxChunkTokens = config.embeddingMaxTokens,
+): Chunk[] {
 	const clean = text.replace(/\r\n/g, "\n").trim();
 	if (!clean) return [];
 
@@ -326,20 +363,24 @@ export function chunkText(text: string, maxChunkTokens = config.embeddingMaxToke
 	let currentHeadings: string[] | undefined;
 	let currentBlocks: string[] = [];
 	const render = (headings: string[], blocks: string[]) => {
-		const context = fitHeadingPath(headings, maxChunkTokens);
+		const context = fitHeadingPath(headings, maxChunkTokens, countTokens);
 		return [...context, blocks.join("\n\n")].filter(Boolean).join("\n\n");
 	};
 	const entries = flattenMarkdownTree(parseMarkdownTree(clean)).flatMap((entry) => {
 		const headingPrefix = render(entry.headings, []);
-		const headingSeparatorBytes = headingPrefix ? 2 : 0;
-		const blockBudget = Math.max(
-			1,
-			maxChunkTokens - byteLength(headingPrefix) - headingSeparatorBytes,
-		);
-		return splitBlock(entry.text, entry.kind, blockBudget).map((part) => ({
-			...entry,
-			text: part,
-		}));
+		let blockBudget = Math.max(1, maxChunkTokens - countTokens(headingPrefix) - 2);
+		while (true) {
+			const parts = splitBlock(entry.text, entry.kind, blockBudget, countTokens);
+			if (parts.every((part) => countTokens(render(entry.headings, [part])) <= maxChunkTokens)) {
+				return parts.map((part) => ({ ...entry, text: part }));
+			}
+			if (blockBudget <= 1) {
+				throw new Error(
+					`Impossible de découper un bloc sous le budget de ${maxChunkTokens} tokens.`,
+				);
+			}
+			blockBudget = Math.max(1, blockBudget - Math.max(1, Math.ceil(maxChunkTokens * 0.05)));
+		}
 	});
 	const flush = () => {
 		if (currentHeadings && currentBlocks.length) {
@@ -356,12 +397,19 @@ export function chunkText(text: string, maxChunkTokens = config.embeddingMaxToke
 		if (!currentHeadings) currentHeadings = entry.headings;
 
 		const candidate = render(currentHeadings, [...currentBlocks, entry.text]);
-		if (currentBlocks.length && byteLength(candidate) > maxChunkTokens) {
+		if (currentBlocks.length && countTokens(candidate) > maxChunkTokens) {
 			flush();
 			currentHeadings = entry.headings;
 		}
 		currentBlocks.push(entry.text);
 	}
 	flush();
+	for (const chunk of chunks) {
+		if (countTokens(chunk.text) > maxChunkTokens) {
+			throw new Error(
+				`Chunk ${chunk.chunkIndex} dépasse le budget maximal de ${maxChunkTokens} tokens.`,
+			);
+		}
+	}
 	return chunks;
 }

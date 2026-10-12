@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, mock } from "bun:test";
 import { config } from "./config.ts";
 import { chunkText, extractText } from "./parser.ts";
 
+const countTestTokens = (text: string) => Array.from(text).length;
 const originalFetch = globalThis.fetch;
 const originalTikaUrl = config.tikaUrl;
 
@@ -45,7 +46,7 @@ Deuxième paragraphe contenant des explications plus longues avec des détails i
 
 Troisième paragraphe de conclusion.`;
 
-		const chunks = chunkText(text, 100);
+		const chunks = chunkText(text, countTestTokens, 100);
 		expect(chunks.length).toBeGreaterThan(1);
 		expect(chunks[0]?.text).toContain("Premier paragraphe");
 		expect(chunks[0]?.chunkIndex).toBe(0);
@@ -53,10 +54,10 @@ Troisième paragraphe de conclusion.`;
 
 	it("splits oversized paragraphs at sentence boundaries within the input budget", () => {
 		const longParagraph = "Une phrase complète. ".repeat(12).trim();
-		const chunks = chunkText(`${longParagraph}\n\nParagraphe suivant.`, 50);
+		const chunks = chunkText(`${longParagraph}\n\nParagraphe suivant.`, countTestTokens, 50);
 
 		expect(chunks.length).toBeGreaterThan(1);
-		expect(chunks.every((chunk) => Buffer.byteLength(chunk.text, "utf8") <= 50)).toBe(true);
+		expect(chunks.every((chunk) => countTestTokens(chunk.text) <= 50)).toBe(true);
 		expect(chunks.map((chunk) => chunk.text).join(" ")).toContain(
 			longParagraph.replace(/\s+/g, " "),
 		);
@@ -69,18 +70,18 @@ Troisième paragraphe de conclusion.`;
 			"| Projet | Une description suffisamment longue pour dépasser la taille cible. |",
 			"| Suite | Une seconde ligne de tableau qui reste attachée à la première. |",
 		].join("\n");
-		const chunks = chunkText(`${table}\n\nConclusion.`, 64);
+		const chunks = chunkText(`${table}\n\nConclusion.`, countTestTokens, 64);
 		const tableChunks = chunks.filter((chunk) => chunk.text.includes("|"));
 
 		expect(chunks.length).toBeGreaterThan(2);
 		expect(tableChunks.every((chunk) => chunk.text.includes("| Sujet | Description |"))).toBe(true);
-		expect(chunks.every((chunk) => Buffer.byteLength(chunk.text, "utf8") <= 64)).toBe(true);
+		expect(chunks.every((chunk) => countTestTokens(chunk.text) <= 64)).toBe(true);
 		expect(chunks.at(-1)?.text).toContain("Conclusion.");
 	});
 
 	it("keeps fenced code blocks together across blank lines", () => {
 		const codeBlock = "```ts\nconst first = 1;\n\nconst second = 2;\n```";
-		const chunks = chunkText(`${codeBlock}\n\nTexte final.`, 50);
+		const chunks = chunkText(`${codeBlock}\n\nTexte final.`, countTestTokens, 50);
 
 		expect(chunks[0]?.text).toBe(codeBlock);
 		expect(chunks[1]?.text).toBe("Texte final.");
@@ -96,20 +97,28 @@ Troisième paragraphe de conclusion.`;
 			"## Dépannage",
 			"Redémarrer le service.",
 		].join("\n\n");
-		const chunks = chunkText(text, 100);
+		const chunks = chunkText(text, countTestTokens, 60);
+		const installationChunks = chunks.filter((chunk) => chunk.text.includes("## Installation"));
+		const troubleshootingChunks = chunks.filter((chunk) => chunk.text.includes("## Dépannage"));
 
-		expect(chunks).toHaveLength(3);
-		expect(chunks[0]?.text).toContain("# Guide\n\n## Installation");
-		expect(chunks[1]?.text).toContain("# Guide\n\n## Installation");
-		expect(chunks[2]?.text).toContain("# Guide\n\n## Dépannage");
-		expect(chunks[2]?.text).not.toContain("Installation");
+		expect(installationChunks.length).toBeGreaterThan(1);
+		expect(
+			installationChunks.every((chunk) => chunk.text.includes("# Guide\n\n## Installation")),
+		).toBe(true);
+		expect(troubleshootingChunks.length).toBeGreaterThan(0);
+		expect(
+			troubleshootingChunks.every(
+				(chunk) =>
+					chunk.text.includes("# Guide\n\n## Dépannage") && !chunk.text.includes("Installation"),
+			),
+		).toBe(true);
 	});
 
-	it("enforces the UTF-8 byte ceiling without splitting Unicode characters", () => {
-		const chunks = chunkText("é🙂".repeat(100), 48);
+	it("enforces the token ceiling without splitting Unicode characters", () => {
+		const chunks = chunkText("é🙂".repeat(100), countTestTokens, 48);
 
 		expect(chunks.length).toBeGreaterThan(1);
-		expect(chunks.every((chunk) => Buffer.byteLength(chunk.text, "utf8") <= 48)).toBe(true);
+		expect(chunks.every((chunk) => countTestTokens(chunk.text) <= 48)).toBe(true);
 		expect(chunks.every((chunk) => !chunk.text.includes("�"))).toBe(true);
 	});
 

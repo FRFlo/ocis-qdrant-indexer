@@ -10,6 +10,7 @@ import { config } from "./config.ts";
 import type { OcisClient } from "./ocis.ts";
 import { chunkText, extractText } from "./parser.ts";
 import type { QdrantManager } from "./qdrant.ts";
+import { getEmbeddingTokenCounter, type TokenCounter } from "./tokenizer.ts";
 
 export interface OcisEvent {
 	Ref?: {
@@ -61,12 +62,18 @@ export class NatsConsumer {
 	private messages?: ConsumerMessages;
 	private qdrant: QdrantManager;
 	private ocis: OcisClient;
+	private tokenCounterFactory: () => Promise<TokenCounter>;
 	private initialScanStarted = false;
 	private indexingByPath = new Map<string, Promise<void>>();
 
-	constructor(qdrant: QdrantManager, ocis: OcisClient) {
+	constructor(
+		qdrant: QdrantManager,
+		ocis: OcisClient,
+		tokenCounterFactory: () => Promise<TokenCounter> = getEmbeddingTokenCounter,
+	) {
 		this.qdrant = qdrant;
 		this.ocis = ocis;
+		this.tokenCounterFactory = tokenCounterFactory;
 	}
 
 	async start(): Promise<void> {
@@ -263,7 +270,8 @@ export class NatsConsumer {
 			return;
 		}
 
-		const chunks = chunkText(parsed.text, config.embeddingMaxTokens);
+		const countTokens = await this.tokenCounterFactory();
+		const chunks = chunkText(parsed.text, countTokens, config.embeddingMaxTokens);
 		await this.qdrant.indexChunks(path, nodeId, chunks, contentHash, metadata, "ownCloud");
 	}
 
