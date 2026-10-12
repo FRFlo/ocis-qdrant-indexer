@@ -45,10 +45,72 @@ Deuxième paragraphe contenant des explications plus longues avec des détails i
 
 Troisième paragraphe de conclusion.`;
 
-		const chunks = chunkText(text, 100, 20);
+		const chunks = chunkText(text, 100);
 		expect(chunks.length).toBeGreaterThan(1);
 		expect(chunks[0]?.text).toContain("Premier paragraphe");
 		expect(chunks[0]?.chunkIndex).toBe(0);
+	});
+
+	it("splits oversized paragraphs at sentence boundaries within the input budget", () => {
+		const longParagraph = "Une phrase complète. ".repeat(12).trim();
+		const chunks = chunkText(`${longParagraph}\n\nParagraphe suivant.`, 50);
+
+		expect(chunks.length).toBeGreaterThan(1);
+		expect(chunks.every((chunk) => Buffer.byteLength(chunk.text, "utf8") <= 50)).toBe(true);
+		expect(chunks.map((chunk) => chunk.text).join(" ")).toContain(
+			longParagraph.replace(/\s+/g, " "),
+		);
+	});
+
+	it("splits oversized Markdown tables by rows while repeating the table header", () => {
+		const table = [
+			"| Sujet | Description |",
+			"| --- | --- |",
+			"| Projet | Une description suffisamment longue pour dépasser la taille cible. |",
+			"| Suite | Une seconde ligne de tableau qui reste attachée à la première. |",
+		].join("\n");
+		const chunks = chunkText(`${table}\n\nConclusion.`, 64);
+		const tableChunks = chunks.filter((chunk) => chunk.text.includes("|"));
+
+		expect(chunks.length).toBeGreaterThan(2);
+		expect(tableChunks.every((chunk) => chunk.text.includes("| Sujet | Description |"))).toBe(true);
+		expect(chunks.every((chunk) => Buffer.byteLength(chunk.text, "utf8") <= 64)).toBe(true);
+		expect(chunks.at(-1)?.text).toContain("Conclusion.");
+	});
+
+	it("keeps fenced code blocks together across blank lines", () => {
+		const codeBlock = "```ts\nconst first = 1;\n\nconst second = 2;\n```";
+		const chunks = chunkText(`${codeBlock}\n\nTexte final.`, 50);
+
+		expect(chunks[0]?.text).toBe(codeBlock);
+		expect(chunks[1]?.text).toBe("Texte final.");
+	});
+
+	it("keeps heading hierarchy as context in each section chunk", () => {
+		const text = [
+			"# Guide",
+			"## Installation",
+			"Installer les dépendances.",
+			"Configurer le service.",
+			"Vérifier la connexion.",
+			"## Dépannage",
+			"Redémarrer le service.",
+		].join("\n\n");
+		const chunks = chunkText(text, 100);
+
+		expect(chunks).toHaveLength(3);
+		expect(chunks[0]?.text).toContain("# Guide\n\n## Installation");
+		expect(chunks[1]?.text).toContain("# Guide\n\n## Installation");
+		expect(chunks[2]?.text).toContain("# Guide\n\n## Dépannage");
+		expect(chunks[2]?.text).not.toContain("Installation");
+	});
+
+	it("enforces the UTF-8 byte ceiling without splitting Unicode characters", () => {
+		const chunks = chunkText("é🙂".repeat(100), 48);
+
+		expect(chunks.length).toBeGreaterThan(1);
+		expect(chunks.every((chunk) => Buffer.byteLength(chunk.text, "utf8") <= 48)).toBe(true);
+		expect(chunks.every((chunk) => !chunk.text.includes("�"))).toBe(true);
 	});
 
 	it("extrait le texte d'un fichier markdown ou texte brut", async () => {

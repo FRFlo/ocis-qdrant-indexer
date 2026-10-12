@@ -263,7 +263,7 @@ export class NatsConsumer {
 			return;
 		}
 
-		const chunks = chunkText(parsed.text);
+		const chunks = chunkText(parsed.text, config.embeddingMaxTokens);
 		await this.qdrant.indexChunks(path, nodeId, chunks, contentHash, metadata, "ownCloud");
 	}
 

@@ -11,6 +11,7 @@ export interface Config {
 	ocisMaxFileSizeBytes: number;
 	tikaUrl?: string;
 	embeddingProvider: "cloudflare" | "openai" | "ollama";
+	embeddingMaxTokens: number;
 	cloudflareAccountId?: string;
 	cloudflareApiToken?: string;
 	cloudflareModel: string;
@@ -41,6 +42,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
 	const mcpPort = positiveInteger(env.MCP_PORT, 3000, "MCP_PORT");
 	if (mcpPort > 65535) throw new Error("MCP_PORT doit être compris entre 1 et 65535.");
+	const embeddingMaxTokens = positiveInteger(
+		env.EMBEDDING_MAX_TOKENS,
+		7_000,
+		"EMBEDDING_MAX_TOKENS",
+	);
+	if (embeddingMaxTokens < 4) {
+		throw new Error("EMBEDDING_MAX_TOKENS doit être au moins égal à 4.");
+	}
 
 	return {
 		natsUrl: env.NATS_URL || "nats://owncloud:9233",
@@ -63,6 +72,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 		),
 		tikaUrl: env.TIKA_URL?.replace(/\/+$/, "") || undefined,
 		embeddingProvider: provider as Config["embeddingProvider"],
+		embeddingMaxTokens,
 		cloudflareAccountId: env.CLOUDFLARE_ACCOUNT_ID,
 		cloudflareApiToken: env.CLOUDFLARE_API_TOKEN,
 		cloudflareModel: env.CLOUDFLARE_MODEL || "@cf/baai/bge-m3",

@@ -33,6 +33,7 @@ Sidecar temps réel d'ingestion et de recherche sémantique (RAG) pour **ownClou
 - **Embeddings sans coût VPS :** Utilise Cloudflare Workers AI (`@cf/baai/bge-m3`, multilingue, 1024 dimensions) dans la limite du Free Tier quotidien (~9M tokens/jour). Support alternatif pour OpenAI (`text-embedding-3-small`) ou Ollama local.
 - **Extraction PDF :** Utilise [OpenDataLoader PDF](https://github.com/opendataloader-project/opendataloader-pdf) pour extraire le texte en Markdown, avec Java 11+ requis (inclus dans l'image Docker).
 - **Extraction générique :** Les fichiers sont d’abord décodés en UTF-8 strict, sans se fier à leur extension. Pour tout contenu binaire, `TIKA_URL` (optionnel) permet de tenter une extraction via un serveur Apache Tika ; sans Tika ou si aucun texte n’est extractible, le fichier n’est pas indexé.
+- **Découpage hiérarchique :** Parse le Markdown/GFM en AST, construit une arborescence H1 à H6 et répète les titres parents dans chaque chunk. Préserve les blocs sous le budget ; si un bloc est trop long, le subdivise d’abord aux retours à la ligne, à la ponctuation, aux lignes de tableau ou de code, puis aux espaces. Le budget par défaut est de 7 000 octets UTF-8 ; c’est un garde-fou conservateur, pas un comptage exact des tokens. Ajustez `EMBEDDING_MAX_TOKENS` selon le modèle et son tokenizer.
 - **Serveur MCP Streamable HTTP :** Expose nativement l'outil `search_owncloud_docs` sur `POST /mcp` compatible avec Executor, Claude Desktop et Hermes Agent.
 
 ## Outil MCP disponible
@@ -60,6 +61,7 @@ Recherche sémantique dans les cours et documents indexés depuis ownCloud.
 | `OCIS_MAX_FILE_SIZE_BYTES` | Taille maximale téléchargée depuis WebDAV (octets)                                     | `52428800`                                  |
 | `TIKA_URL`                 | URL de base facultative du serveur Apache Tika (`/tika/md` est ajouté automatiquement) | -                                           |
 | `EMBEDDING_PROVIDER`       | Provider d'embedding (`cloudflare`, `openai`, `ollama`)                                | `cloudflare`                                |
+| `EMBEDDING_MAX_TOKENS`     | Plafond de taille par chunk en octets UTF-8 (approximation, pas un comptage exact)     | `7000`                                      |
 | `CLOUDFLARE_ACCOUNT_ID`    | ID de compte Cloudflare                                                                | -                                           |
 | `CLOUDFLARE_API_TOKEN`     | Jeton API Cloudflare Workers AI                                                        | -                                           |
 | `CLOUDFLARE_MODEL`         | Modèle d'embedding Cloudflare                                                          | `@cf/baai/bge-m3`                           |

@@ -14,6 +14,13 @@ describe("loadConfig", () => {
 		const config = loadConfig({ EMBEDDING_PROVIDER: "ollama" });
 		expect(config.ocisRequestTimeoutMs).toBe(30_000);
 		expect(config.ocisMaxFileSizeBytes).toBe(50 * 1024 * 1024);
+		expect(config.embeddingMaxTokens).toBe(7_000);
+	});
+
+	it("accepts a custom embedding input token budget", () => {
+		expect(loadConfig({ EMBEDDING_MAX_TOKENS: "512" }).embeddingMaxTokens).toBe(512);
+		expect(() => loadConfig({ EMBEDDING_MAX_TOKENS: "0" })).toThrow("EMBEDDING_MAX_TOKENS");
+		expect(() => loadConfig({ EMBEDDING_MAX_TOKENS: "3" })).toThrow("au moins égal à 4");
 	});
 
 	it("accepts an optional Tika server URL", () => {
