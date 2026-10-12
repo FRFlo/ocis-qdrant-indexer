@@ -30,30 +30,42 @@ export class CloudflareEmbedder implements Embedder {
 		if (texts.length === 0) return [];
 
 		const url = `https://api.cloudflare.com/client/v4/accounts/${this.accountId}/ai/run/${this.model}`;
-		const res = await fetch(url, {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${this.apiToken}`,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({ text: texts }),
-		});
-
-		if (!res.ok) {
-			const err = await res.text();
-			throw new Error(`Erreur Cloudflare Workers AI (${res.status}): ${err}`);
-		}
-
-		const data = (await res.json()) as {
-			result?: { data?: number[][] };
-			success?: boolean;
+		const vectors: number[][] = [];
+		let batch: string[] = [];
+		let batchChars = 0;
+		const flush = async () => {
+			if (batch.length === 0) return;
+			const res = await fetch(url, {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${this.apiToken}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ text: batch }),
+			});
+			if (!res.ok) {
+				const err = await res.text();
+				throw new Error(`Erreur Cloudflare Workers AI (${res.status}): ${err}`);
+			}
+			const data = (await res.json()) as { result?: { data?: number[][] } };
+			if (!data.result?.data || data.result.data.length !== batch.length) {
+				throw new Error("Réponse Cloudflare invalide : embeddings manquants");
+			}
+			vectors.push(...data.result.data);
+			batch = [];
+			batchChars = 0;
 		};
 
-		if (!data.result?.data) {
-			throw new Error("Réponse Cloudflare invalide : champ result.data manquant");
+		// Keep total request size safely below the model's context window.
+		for (const text of texts) {
+			if (batch.length && (batch.length >= 16 || batchChars + text.length > 20_000)) {
+				await flush();
+			}
+			batch.push(text);
+			batchChars += text.length;
 		}
-
-		return data.result.data;
+		await flush();
+		return vectors;
 	}
 }
 
