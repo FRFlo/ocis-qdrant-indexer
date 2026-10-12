@@ -15,6 +15,7 @@ describe("QdrantManager", () => {
 				request: { points: Array<{ payload: Record<string, unknown> }> },
 			) => {
 				expect(request.points[0]?.payload.content_hash).toBe("content-sha");
+				expect(request.points[0]?.payload.source).toBe("ownCloud");
 				expect(request.points[0]?.payload.webdav_url).toBe(
 					"https://owncloud.example/dav/spaces/space/notes/page.md",
 				);

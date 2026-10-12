@@ -79,6 +79,7 @@ export class QdrantManager {
 		chunks: Chunk[],
 		contentHash: string,
 		metadata: OcisFileMetadata = { webdav_url: "" },
+		source = "ownCloud",
 	): Promise<number> {
 		if (chunks.length === 0) return 0;
 
@@ -105,6 +106,7 @@ export class QdrantManager {
 				filename: path.split("/").pop() || "",
 				chunk_index: chunk.chunkIndex,
 				content_hash: contentHash,
+				source,
 				...metadata,
 				text: chunk.text,
 				indexed_at: new Date().toISOString(),
@@ -186,6 +188,7 @@ export class QdrantManager {
 			sizeBytes: r.payload?.size_bytes as number | undefined,
 			contentType: r.payload?.content_type as string | undefined,
 			etag: r.payload?.etag as string | undefined,
+			source: (r.payload?.source as string | undefined) || "unknown",
 		}));
 	}
 }

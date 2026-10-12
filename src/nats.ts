@@ -265,7 +265,7 @@ export class NatsConsumer {
 		}
 
 		const chunks = chunkText(parsed.text);
-		await this.qdrant.indexChunks(path, nodeId, chunks, contentHash, metadata);
+		await this.qdrant.indexChunks(path, nodeId, chunks, contentHash, metadata, "ownCloud");
 	}
 
 	async close(): Promise<void> {
