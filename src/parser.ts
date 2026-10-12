@@ -39,11 +39,14 @@ export async function extractText(filename: string, buffer: Buffer): Promise<Par
 
 	if (!config.tikaUrl) return { text: "", title };
 
-	const endpoint = config.tikaUrl.endsWith("/tika") ? config.tikaUrl : `${config.tikaUrl}/tika`;
+	const endpoint = config.tikaUrl.endsWith("/tika/md")
+		? config.tikaUrl
+		: config.tikaUrl.endsWith("/tika")
+			? `${config.tikaUrl}/md`
+			: `${config.tikaUrl}/tika/md`;
 	const response = await fetch(endpoint, {
 		method: "PUT",
 		headers: {
-			Accept: "text/plain",
 			"Content-Type": "application/octet-stream",
 		},
 		body: buffer,

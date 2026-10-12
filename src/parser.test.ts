@@ -88,7 +88,7 @@ Troisième paragraphe de conclusion.`;
 
 		expect(parsed).toEqual({ text: "Document Office extrait", title: "archive.custom" });
 		expect(fetchMock).toHaveBeenCalledWith(
-			"http://tika:9998/tika",
+			"http://tika:9998/tika/md",
 			expect.objectContaining({ method: "PUT" }),
 		);
 	});
