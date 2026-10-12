@@ -15,6 +15,7 @@ describe("loadConfig", () => {
 		expect(config.ocisRequestTimeoutMs).toBe(30_000);
 		expect(config.ocisMaxFileSizeBytes).toBe(50 * 1024 * 1024);
 		expect(config.embeddingMaxTokens).toBe(7_000);
+		expect(config.indexConcurrency).toBe(4);
 	});
 
 	it("accepts a custom embedding input token budget", () => {

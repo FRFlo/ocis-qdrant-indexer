@@ -23,6 +23,19 @@ describe("NatsConsumer", () => {
 		expect(ocis.listFiles).toHaveBeenCalledTimes(2);
 	});
 
+	it("deletes indexed documents missing from ownCloud during the initial scan", async () => {
+		const ocis = { listFiles: mock(async () => []) } as unknown as OcisClient;
+		const qdrant = {
+			listIndexedPaths: mock(async () => ["removed/document.md"]),
+			deleteFileVectors: mock(async () => undefined),
+		} as unknown as QdrantManager;
+		const consumer = new NatsConsumer(qdrant, ocis, testTokenCounterFactory);
+
+		await (consumer as unknown as { indexExistingFiles: () => Promise<void> }).indexExistingFiles();
+
+		expect(qdrant.deleteFileVectors).toHaveBeenCalledWith("removed/document.md");
+	});
+
 	it("indexes official oCIS UploadReady payloads and propagates failures", async () => {
 		const ocis = {
 			getFileMetadata: mock(async () => ({ webdav_url: "https://owncloud/document.md" })),
@@ -76,6 +89,38 @@ describe("NatsConsumer", () => {
 
 		expect(ocis.downloadFile).toHaveBeenCalledWith("personal/document.md");
 		expect(qdrant.indexChunks).toHaveBeenCalled();
+	});
+
+	it("stores an oCIS /f/ link using the full space and resource IDs", async () => {
+		const originalPublicUrl = config.ocisPublicUrl;
+		config.ocisPublicUrl = "https://owncloud.example";
+		const ocis = {
+			getFileMetadata: mock(async () => ({ webdav_url: "https://dav/document.md" })),
+			downloadFile: mock(async () => Buffer.from("plain text")),
+		} as unknown as OcisClient;
+		const qdrant = {
+			hasCurrentContentHash: mock(async () => false),
+			indexChunks: mock(async () => 1),
+		} as unknown as QdrantManager;
+		const consumer = new NatsConsumer(qdrant, ocis, testTokenCounterFactory);
+
+		try {
+			await consumer.handleEvent("events.FileUploaded", {
+				Ref: { path: "document.md" },
+				ResourceID: {
+					SpaceId: "2acaad56-f816-4061-a5dd-5e4fb29f8f51",
+					OpaqueId: "5c6829a8-0925-4b97-9d00-f5533fc91dff!63661b17-d67a-4899-8c53-3ced7da4a6fc",
+				},
+			});
+
+			const metadata = (qdrant.indexChunks as ReturnType<typeof mock>).mock.calls[0]?.[4];
+			expect(metadata).toMatchObject({
+				ocis_url:
+					"https://owncloud.example/f/2acaad56-f816-4061-a5dd-5e4fb29f8f51$5c6829a8-0925-4b97-9d00-f5533fc91dff%2163661b17-d67a-4899-8c53-3ced7da4a6fc",
+			});
+		} finally {
+			config.ocisPublicUrl = originalPublicUrl;
+		}
 	});
 
 	it("skips embedding generation when a file hash is already indexed", async () => {

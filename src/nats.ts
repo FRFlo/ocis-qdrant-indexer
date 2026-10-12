@@ -137,7 +137,6 @@ export class NatsConsumer {
 								: Buffer.from(busMessage.Payload).toString("utf8");
 						const data: OcisEvent = JSON.parse(rawData);
 
-						console.log(`[NATS] Événement reçu [${eventName}] sur ${m.subject}`);
 						await this.handleEvent(eventName, data);
 						m.ack();
 					} catch (err) {
@@ -169,6 +168,12 @@ export class NatsConsumer {
 			fileResourceId?.OpaqueId ??
 			fileResourceId?.opaque_id ??
 			"unknown";
+		const spaceId =
+			resourceId?.SpaceId ??
+			resourceId?.space_id ??
+			fileResourceId?.SpaceId ??
+			fileResourceId?.space_id;
+		const publicResourceId = spaceId && nodeId !== "unknown" ? `${spaceId}$${nodeId}` : undefined;
 
 		if (!path) return;
 
@@ -177,9 +182,8 @@ export class NatsConsumer {
 				console.log(`[Indexer] Upload oCIS échoué pour ${path}, ignoré.`);
 				return;
 			}
-			console.log(`[Indexer] Indexation demandée pour ${path} (ID: ${nodeId})`);
 			try {
-				await this.indexFile(path, nodeId);
+				await this.indexFile(path, nodeId, publicResourceId);
 			} catch (err) {
 				console.error(`[Indexer] Échec de l'indexation de ${path}:`, err);
 				throw err;
@@ -188,9 +192,9 @@ export class NatsConsumer {
 
 		// 2. Suppression de fichier (corbeille ou purge définitive)
 		if (eventName === "events.ItemTrashed" || eventName === "events.ItemPurged") {
-			console.log(`[Indexer] Fichier supprimé dans oCIS, purge des vecteurs: ${path}`);
 			try {
 				await this.qdrant.deleteFileVectors(path);
+				console.log(`[Indexer] supprimé: ${path}`);
 			} catch (err) {
 				console.error(`[Indexer] Échec de la purge de ${path}:`, err);
 				throw err;
@@ -221,29 +225,58 @@ export class NatsConsumer {
 				}
 			}
 			if (!files) throw new Error("Le scan WebDAV n'a retourné aucun résultat.");
-			console.log(`[Indexer] Scan initial WebDAV : ${files.length} fichiers découverts.`);
-			for (const path of files) {
-				try {
-					await this.indexFile(path, "unknown");
-				} catch (err) {
-					console.error(`[Indexer] Échec du scan de ${path}, les autres fichiers continuent:`, err);
+			const livePaths = new Set(files.map(normalizeFilePath));
+			let checked = 0,
+				updated = 0,
+				deleted = 0,
+				added = 0;
+			let cursor = 0;
+			const workers = Array.from(
+				{ length: Math.min(config.indexConcurrency, files.length) },
+				async () => {
+					while (cursor < files.length) {
+						const path = files[cursor++]!;
+						try {
+							const result = await this.indexFile(path, "unknown");
+							checked++;
+							if (result === "updated") updated++;
+							if (result === "added") added++;
+						} catch (err) {
+							console.error(`[Indexer] Échec du scan de ${path}:`, err);
+						}
+					}
+				},
+			);
+			await Promise.all(workers);
+			const indexedPaths = this.qdrant.listIndexedPaths ? await this.qdrant.listIndexedPaths() : [];
+			for (const path of indexedPaths) {
+				if (!livePaths.has(normalizeFilePath(path))) {
+					await this.qdrant.deleteFileVectors(path);
+					deleted++;
+					console.log(`[Indexer] supprimé: ${path}`);
 				}
 			}
-			console.log("[Indexer] Scan initial WebDAV terminé.");
+			console.log(
+				`[Indexer] Bilan: ${checked} checkés, ${updated} update, ${deleted} supprimés, ${added} ajoutés.`,
+			);
 		} catch (err) {
 			console.error("[Indexer] Échec du scan initial WebDAV:", err);
 		}
 	}
 
-	private async indexFile(path: string, nodeId: string): Promise<void> {
+	private async indexFile(
+		path: string,
+		nodeId: string,
+		publicResourceId?: string,
+	): Promise<"unchanged" | "updated" | "added"> {
 		const previous = this.indexingByPath.get(path) ?? Promise.resolve();
 		const current = previous
 			.catch(() => undefined)
-			.then(() => this.indexFileIfChanged(path, nodeId));
+			.then(() => this.indexFileIfChanged(path, nodeId, publicResourceId));
 		this.indexingByPath.set(path, current);
 
 		try {
-			await current;
+			return await current;
 		} finally {
 			if (this.indexingByPath.get(path) === current) {
 				this.indexingByPath.delete(path);
@@ -251,28 +284,38 @@ export class NatsConsumer {
 		}
 	}
 
-	private async indexFileIfChanged(path: string, nodeId: string): Promise<void> {
+	private async indexFileIfChanged(
+		path: string,
+		nodeId: string,
+		publicResourceId?: string,
+	): Promise<"unchanged" | "updated" | "added"> {
 		const metadata = await this.ocis.getFileMetadata(path);
+		if (config.ocisPublicUrl && publicResourceId) {
+			const encodedId = encodeURIComponent(publicResourceId)
+				.replace(/%24/gi, "$")
+				.replace(/!/g, "%21");
+			metadata.ocis_url = `${config.ocisPublicUrl}/f/${encodedId}`;
+		}
 		const buffer = await this.ocis.downloadFile(path);
 		const contentHash = createHash("sha256").update(buffer).digest("hex");
 		if (await this.qdrant.hasCurrentContentHash(path, contentHash)) {
-			console.log(`[Indexer] Contenu inchangé pour ${path}, embeddings conservés.`);
-			return;
+			return "unchanged";
 		}
+		const existed = this.qdrant.hasIndexedPath ? await this.qdrant.hasIndexedPath(path) : false;
 
 		const filename = path.split("/").pop() || "";
 		const parsed = await extractText(filename, buffer);
 		if (!parsed.text.trim()) {
-			console.log(
-				`[Indexer] Aucun texte extractible pour ${path}, suppression des anciens vecteurs.`,
-			);
 			await this.qdrant.deleteFileVectors(path);
-			return;
+			console.log(`[Indexer] supprimé: ${path}`);
+			return "updated";
 		}
 
 		const countTokens = await this.tokenCounterFactory();
 		const chunks = chunkText(parsed.text, countTokens, config.embeddingMaxTokens);
 		await this.qdrant.indexChunks(path, nodeId, chunks, contentHash, metadata, "ownCloud");
+		console.log(`[Indexer] indexé: ${path}`);
+		return existed ? "updated" : "added";
 	}
 
 	async close(): Promise<void> {

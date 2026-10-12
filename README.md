@@ -59,6 +59,8 @@ Recherche sémantique dans les cours et documents indexés depuis ownCloud.
 | `OCIS_TOKEN`                    | Jeton WebDAV oCIS (Bearer ou jeton d'application)                                      | -                                           |
 | `OCIS_REQUEST_TIMEOUT_MS`       | Délai maximal d'un téléchargement WebDAV (ms)                                          | `30000`                                     |
 | `OCIS_MAX_FILE_SIZE_BYTES`      | Taille maximale téléchargée depuis WebDAV (octets)                                     | `52428800`                                  |
+| `OCIS_PUBLIC_URL`               | URL publique de l'interface ownCloud, utilisée pour construire le lien user-facing     | -                                           |
+| `INDEX_CONCURRENCY`             | Nombre maximal de fichiers traités simultanément au scan initial                       | `4`                                         |
 | `TIKA_URL`                      | URL de base facultative du serveur Apache Tika (`/tika/md` est ajouté automatiquement) | -                                           |
 | `EMBEDDING_PROVIDER`            | Provider d'embedding (`cloudflare`, `openai`, `ollama`)                                | `cloudflare`                                |
 | `EMBEDDING_MAX_TOKENS`          | Nombre maximal exact de tokens par chunk, comptés par le tokenizer du modèle           | `7000`                                      |

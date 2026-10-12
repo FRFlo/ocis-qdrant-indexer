@@ -2,6 +2,7 @@ import { config } from "./config.ts";
 
 export interface OcisFileMetadata {
 	webdav_url: string;
+	ocis_url?: string;
 	last_modified?: string;
 	created_at?: string;
 	size_bytes?: number;
@@ -122,7 +123,6 @@ export class OcisClient {
 
 		const url = this.fileUrl(segments.join("/"));
 
-		console.log(`[oCIS] Téléchargement du fichier ${path}...`);
 		const res = await this.fetchWebdav(url, {
 			headers: this.authHeaders(),
 			signal: AbortSignal.timeout(config.ocisRequestTimeoutMs),

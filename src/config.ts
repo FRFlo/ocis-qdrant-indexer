@@ -4,6 +4,8 @@ export interface Config {
 	qdrantApiKey?: string;
 	qdrantCollection: string;
 	ocisWebdavUrl: string;
+	ocisPublicUrl?: string;
+	indexConcurrency: number;
 	ocisUsername: string;
 	ocisPassword?: string;
 	ocisToken?: string;
@@ -60,6 +62,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 		qdrantApiKey: env.QDRANT_API_KEY,
 		qdrantCollection: env.QDRANT_COLLECTION || "owncloud_documents",
 		ocisWebdavUrl: env.OCIS_WEBDAV_URL || "http://owncloud:9200/remote.php/dav/files",
+		ocisPublicUrl: env.OCIS_PUBLIC_URL?.replace(/\/+$/, "") || undefined,
+		indexConcurrency: positiveInteger(env.INDEX_CONCURRENCY, 4, "INDEX_CONCURRENCY"),
 		ocisUsername: env.OCIS_USERNAME || "admin",
 		ocisPassword: env.OCIS_PASSWORD,
 		ocisToken: env.OCIS_TOKEN,

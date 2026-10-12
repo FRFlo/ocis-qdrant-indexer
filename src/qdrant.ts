@@ -23,9 +23,6 @@ export class QdrantManager {
 		const exists = collections.collections.some((c) => c.name === this.collection);
 
 		if (!exists) {
-			console.log(
-				`[Qdrant] Création de la collection "${this.collection}" (dim: ${this.embedder.dimensions()})...`,
-			);
 			await this.client.createCollection(this.collection, {
 				vectors: {
 					size: this.embedder.dimensions(),
@@ -46,7 +43,6 @@ export class QdrantManager {
 	}
 
 	async deleteFileVectors(path: string): Promise<void> {
-		console.log(`[Qdrant] Suppression des vecteurs pour ${path}...`);
 		await this.client.delete(this.collection, {
 			filter: {
 				should: this.pathVariants(path).map((value) => ({
@@ -73,6 +69,39 @@ export class QdrantManager {
 		return points[0]?.payload?.content_hash === contentHash;
 	}
 
+	async hasIndexedPath(path: string): Promise<boolean> {
+		const { points } = await this.client.scroll(this.collection, {
+			filter: {
+				should: this.pathVariants(path).map((value) => ({
+					key: "path",
+					match: { value },
+				})),
+			},
+			limit: 1,
+			with_payload: false,
+			with_vector: false,
+		});
+		return points.length > 0;
+	}
+
+	async listIndexedPaths(): Promise<string[]> {
+		const paths = new Set<string>();
+		let offset: string | number | undefined;
+		do {
+			const page = await this.client.scroll(this.collection, {
+				limit: 256,
+				offset,
+				with_payload: ["path"],
+				with_vector: false,
+			});
+			for (const point of page.points) {
+				if (typeof point.payload?.path === "string") paths.add(point.payload.path);
+			}
+			offset = page.next_page_offset as string | number | undefined;
+		} while (offset !== undefined && offset !== null);
+		return [...paths];
+	}
+
 	async indexChunks(
 		path: string,
 		nodeId: string,
@@ -86,7 +115,6 @@ export class QdrantManager {
 		// Generate all embeddings before changing the current index. A provider
 		// failure must not make an already indexed document disappear.
 		const texts = chunks.map((c) => c.text);
-		console.log(`[Qdrant] Calcul de ${texts.length} embeddings pour ${path}...`);
 		const vectors = await this.embedder.embed(texts);
 		if (
 			vectors.length !== chunks.length ||
@@ -128,7 +156,6 @@ export class QdrantManager {
 			wait: true,
 		});
 
-		console.log(`[Qdrant] ${points.length} chunks indexés avec succès pour ${path}`);
 		return points.length;
 	}
 
@@ -183,6 +210,7 @@ export class QdrantManager {
 			text: r.payload?.text as string,
 			chunkIndex: r.payload?.chunk_index as number,
 			webdavUrl: r.payload?.webdav_url as string,
+			ocisUrl: r.payload?.ocis_url as string | undefined,
 			lastModified: r.payload?.last_modified as string | undefined,
 			createdAt: r.payload?.created_at as string | undefined,
 			sizeBytes: r.payload?.size_bytes as number | undefined,
