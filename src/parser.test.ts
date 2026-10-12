@@ -1,5 +1,14 @@
-import { describe, expect, it } from "bun:test";
-import { chunkText, extractText, isSupportedFile } from "./parser.ts";
+import { afterEach, describe, expect, it, mock } from "bun:test";
+import { config } from "./config.ts";
+import { chunkText, extractText } from "./parser.ts";
+
+const originalFetch = globalThis.fetch;
+const originalTikaUrl = config.tikaUrl;
+
+afterEach(() => {
+	globalThis.fetch = originalFetch;
+	config.tikaUrl = originalTikaUrl;
+});
 
 describe("parser", () => {
 	it("extrait un PDF en Markdown avec OpenDataLoader", async () => {
@@ -50,9 +59,77 @@ Troisième paragraphe de conclusion.`;
 		expect(parsed.text).toContain("Titre du cours");
 	});
 
-	it("identifies only formats supported by the indexer", () => {
-		expect(isSupportedFile("Cours.PDF")).toBe(true);
-		expect(isSupportedFile("notes.md")).toBe(true);
-		expect(isSupportedFile("archive.zip")).toBe(false);
+	it("indexe tout fichier texte valide en UTF-8, quel que soit son suffixe", async () => {
+		const parsed = await extractText("notes.custom", Buffer.from("Texte UTF-8 valide"));
+
+		expect(parsed.text).toBe("Texte UTF-8 valide");
+	});
+
+	it("ignore les contenus binaires et les séquences UTF-8 invalides", async () => {
+		await expect(
+			extractText("archive.zip", Buffer.from([0x50, 0x4b, 0x00, 0x01])),
+		).resolves.toMatchObject({
+			text: "",
+		});
+		await expect(extractText("unknown.bin", Buffer.from([0xff, 0xfe]))).resolves.toMatchObject({
+			text: "",
+		});
+	});
+
+	it("envoie un contenu binaire quelconque à Tika lorsqu'il est configuré", async () => {
+		config.tikaUrl = "http://tika:9998";
+		const fetchMock = mock(
+			async (_input: string | URL | Request, _init?: RequestInit) =>
+				new Response("Document Office extrait"),
+		);
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const parsed = await extractText("archive.custom", Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]));
+
+		expect(parsed).toEqual({ text: "Document Office extrait", title: "archive.custom" });
+		expect(fetchMock).toHaveBeenCalledWith(
+			"http://tika:9998/tika",
+			expect.objectContaining({ method: "PUT" }),
+		);
+	});
+
+	it("n'indexe pas les fichiers binaires sans Tika", async () => {
+		config.tikaUrl = undefined;
+		await expect(
+			extractText("report.xlsx", Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00])),
+		).resolves.toMatchObject({
+			text: "",
+		});
+	});
+
+	it("treats Tika parse errors as non-parseable files", async () => {
+		config.tikaUrl = "http://tika:9998";
+		globalThis.fetch = mock(
+			async () =>
+				new Response("Parser failed", { status: 500, statusText: "Internal Server Error" }),
+		) as unknown as typeof fetch;
+		const warn = mock((message: string) => message);
+		const originalWarn = console.warn;
+		console.warn = warn;
+		try {
+			await expect(extractText("unknown.bin", Buffer.from([0x00, 0xff]))).resolves.toMatchObject({
+				text: "",
+			});
+			expect(warn).toHaveBeenCalledTimes(1);
+			expect(warn.mock.calls[0]?.[0]).toContain("500 Internal Server Error");
+		} finally {
+			console.warn = originalWarn;
+		}
+	});
+
+	it("surfaces Tika server errors so indexing can be retried", async () => {
+		config.tikaUrl = "http://tika:9998";
+		globalThis.fetch = mock(
+			async () => new Response("Server failure", { status: 503, statusText: "Unavailable" }),
+		) as unknown as typeof fetch;
+
+		await expect(extractText("unknown.bin", Buffer.from([0x00, 0xff]))).rejects.toThrow(
+			"503 Unavailable",
+		);
 	});
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
+import { config } from "./config.ts";
 import { NatsConsumer } from "./nats.ts";
 import type { OcisClient } from "./ocis.ts";
 import type { QdrantManager } from "./qdrant.ts";
@@ -105,6 +106,31 @@ describe("NatsConsumer", () => {
 		});
 
 		expect(ocis.downloadFile).not.toHaveBeenCalled();
+	});
+
+	it("does not index binary Office uploads when Tika is unavailable", async () => {
+		const originalTikaUrl = config.tikaUrl;
+		config.tikaUrl = undefined;
+		const ocis = {
+			getFileMetadata: mock(async () => ({ webdav_url: "https://owncloud/report.docx" })),
+			downloadFile: mock(async () => Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00])),
+		} as unknown as OcisClient;
+		const qdrant = {
+			hasCurrentContentHash: mock(async () => false),
+			indexChunks: mock(async () => 0),
+			deleteFileVectors: mock(async () => undefined),
+		} as unknown as QdrantManager;
+		const consumer = new NatsConsumer(qdrant, ocis);
+
+		try {
+			await consumer.handleEvent("events.FileUploaded", {
+				Ref: { path: "report.docx" },
+			});
+			expect(ocis.downloadFile).toHaveBeenCalledWith("report.docx");
+			expect(qdrant.indexChunks).not.toHaveBeenCalled();
+		} finally {
+			config.tikaUrl = originalTikaUrl;
+		}
 	});
 
 	it("ignores events without a file reference path", async () => {

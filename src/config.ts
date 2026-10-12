@@ -9,6 +9,7 @@ export interface Config {
 	ocisToken?: string;
 	ocisRequestTimeoutMs: number;
 	ocisMaxFileSizeBytes: number;
+	tikaUrl?: string;
 	embeddingProvider: "cloudflare" | "openai" | "ollama";
 	cloudflareAccountId?: string;
 	cloudflareApiToken?: string;
@@ -60,6 +61,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 			50 * 1024 * 1024,
 			"OCIS_MAX_FILE_SIZE_BYTES",
 		),
+		tikaUrl: env.TIKA_URL?.replace(/\/+$/, "") || undefined,
 		embeddingProvider: provider as Config["embeddingProvider"],
 		cloudflareAccountId: env.CLOUDFLARE_ACCOUNT_ID,
 		cloudflareApiToken: env.CLOUDFLARE_API_TOKEN,

@@ -15,4 +15,9 @@ describe("loadConfig", () => {
 		expect(config.ocisRequestTimeoutMs).toBe(30_000);
 		expect(config.ocisMaxFileSizeBytes).toBe(50 * 1024 * 1024);
 	});
+
+	it("accepts an optional Tika server URL", () => {
+		expect(loadConfig({ TIKA_URL: "http://tika:9998/" }).tikaUrl).toBe("http://tika:9998");
+		expect(loadConfig({}).tikaUrl).toBeUndefined();
+	});
 });

@@ -8,7 +8,7 @@ import {
 import { createHash } from "node:crypto";
 import { config } from "./config.ts";
 import type { OcisClient } from "./ocis.ts";
-import { chunkText, extractText, isSupportedFile } from "./parser.ts";
+import { chunkText, extractText } from "./parser.ts";
 import type { QdrantManager } from "./qdrant.ts";
 
 export interface OcisEvent {
@@ -216,7 +216,6 @@ export class NatsConsumer {
 			if (!files) throw new Error("Le scan WebDAV n'a retourné aucun résultat.");
 			console.log(`[Indexer] Scan initial WebDAV : ${files.length} fichiers découverts.`);
 			for (const path of files) {
-				if (!isSupportedFile(path)) continue;
 				try {
 					await this.indexFile(path, "unknown");
 				} catch (err) {
