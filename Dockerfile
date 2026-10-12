@@ -1,6 +1,6 @@
 FROM oven/bun:1-alpine
 
-RUN apk add --no-cache openjdk21-jre-headless
+RUN apk add --no-cache openjdk21-jre lcms2
 
 WORKDIR /app
 
