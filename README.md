@@ -33,7 +33,7 @@ Sidecar temps réel d'ingestion et de recherche sémantique (RAG) pour **ownClou
 - **Embeddings sans coût VPS :** Utilise Cloudflare Workers AI (`@cf/baai/bge-m3`, multilingue, 1024 dimensions) dans la limite du Free Tier quotidien (~9M tokens/jour). Support alternatif pour OpenAI (`text-embedding-3-small`) ou Ollama local.
 - **Extraction PDF :** Utilise [OpenDataLoader PDF](https://github.com/opendataloader-project/opendataloader-pdf) pour extraire le texte en Markdown, avec Java 11+ requis (inclus dans l'image Docker).
 - **Extraction générique :** Les fichiers sont d’abord décodés en UTF-8 strict, sans se fier à leur extension. Pour tout contenu binaire, `TIKA_URL` (optionnel) permet de tenter une extraction via un serveur Apache Tika ; sans Tika ou si aucun texte n’est extractible, le fichier n’est pas indexé.
-- **Découpage hiérarchique :** Parse le Markdown/GFM en AST, construit une arborescence H1 à H6 et répète les titres parents dans chaque chunk. Préserve les blocs sous le budget ; si un bloc est trop long, le subdivise d’abord aux retours à la ligne, à la ponctuation, aux lignes de tableau ou de code, puis aux espaces. Le budget par défaut est de 7 000 octets UTF-8 ; c’est un garde-fou conservateur, pas un comptage exact des tokens. Ajustez `EMBEDDING_MAX_TOKENS` selon le modèle et son tokenizer.
+- **Découpage hiérarchique :** Parse le Markdown/GFM en AST, construit une arborescence H1 à H6 et répète les titres parents dans chaque chunk. Préserve les blocs sous le budget ; subdivise les blocs trop longs en conservant les en-têtes de tableaux. Le budget par défaut de 7 000 tokens est compté avec le tokenizer du modèle : tokenizer BGE-M3 officiel Hugging Face (révision épinglée) ou `cl100k_base` pour les modèles d’embedding OpenAI pris en charge. Les fichiers du tokenizer sont téléchargés puis mis en cache ; les modèles personnalisés doivent fournir leur identifiant Hugging Face dans `EMBEDDING_TOKENIZER_MODEL`.
 - **Serveur MCP Streamable HTTP :** Expose nativement l'outil `search_owncloud_docs` sur `POST /mcp` compatible avec Executor, Claude Desktop et Hermes Agent.
 
 ## Outil MCP disponible
@@ -48,25 +48,28 @@ Recherche sémantique dans les cours et documents indexés depuis ownCloud.
 
 ## Variables d'environnement
 
-| Variable                   | Description                                                                            | Défaut                                      |
-| -------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `NATS_URL`                 | URL de connexion au bus NATS oCIS                                                      | `nats://owncloud:9233`                      |
-| `QDRANT_URL`               | URL de la base vectorielle Qdrant                                                      | `http://qdrant:6333`                        |
-| `QDRANT_COLLECTION`        | Nom de la collection vectorielle                                                       | `owncloud_documents`                        |
-| `OCIS_WEBDAV_URL`          | Racine WebDAV oCIS (endpoint `.../dav/spaces/{space-id}` recommandé)                   | `http://owncloud:9200/remote.php/dav/files` |
-| `OCIS_USERNAME`            | Nom d'utilisateur oCIS                                                                 | `admin`                                     |
-| `OCIS_PASSWORD`            | Mot de passe oCIS (authentification Basic WebDAV)                                      | -                                           |
-| `OCIS_TOKEN`               | Jeton WebDAV oCIS (Bearer ou jeton d'application)                                      | -                                           |
-| `OCIS_REQUEST_TIMEOUT_MS`  | Délai maximal d'un téléchargement WebDAV (ms)                                          | `30000`                                     |
-| `OCIS_MAX_FILE_SIZE_BYTES` | Taille maximale téléchargée depuis WebDAV (octets)                                     | `52428800`                                  |
-| `TIKA_URL`                 | URL de base facultative du serveur Apache Tika (`/tika/md` est ajouté automatiquement) | -                                           |
-| `EMBEDDING_PROVIDER`       | Provider d'embedding (`cloudflare`, `openai`, `ollama`)                                | `cloudflare`                                |
-| `EMBEDDING_MAX_TOKENS`     | Plafond de taille par chunk en octets UTF-8 (approximation, pas un comptage exact)     | `7000`                                      |
-| `CLOUDFLARE_ACCOUNT_ID`    | ID de compte Cloudflare                                                                | -                                           |
-| `CLOUDFLARE_API_TOKEN`     | Jeton API Cloudflare Workers AI                                                        | -                                           |
-| `CLOUDFLARE_MODEL`         | Modèle d'embedding Cloudflare                                                          | `@cf/baai/bge-m3`                           |
-| `MCP_PORT`                 | Port d'écoute du serveur MCP                                                           | `3000`                                      |
-| `MCP_AUTH_TOKEN`           | Jeton Bearer facultatif pour protéger les routes MCP                                   | - (authentification désactivée)             |
+| Variable                        | Description                                                                            | Défaut                                      |
+| ------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `NATS_URL`                      | URL de connexion au bus NATS oCIS                                                      | `nats://owncloud:9233`                      |
+| `QDRANT_URL`                    | URL de la base vectorielle Qdrant                                                      | `http://qdrant:6333`                        |
+| `QDRANT_COLLECTION`             | Nom de la collection vectorielle                                                       | `owncloud_documents`                        |
+| `OCIS_WEBDAV_URL`               | Racine WebDAV oCIS (endpoint `.../dav/spaces/{space-id}` recommandé)                   | `http://owncloud:9200/remote.php/dav/files` |
+| `OCIS_USERNAME`                 | Nom d'utilisateur oCIS                                                                 | `admin`                                     |
+| `OCIS_PASSWORD`                 | Mot de passe oCIS (authentification Basic WebDAV)                                      | -                                           |
+| `OCIS_TOKEN`                    | Jeton WebDAV oCIS (Bearer ou jeton d'application)                                      | -                                           |
+| `OCIS_REQUEST_TIMEOUT_MS`       | Délai maximal d'un téléchargement WebDAV (ms)                                          | `30000`                                     |
+| `OCIS_MAX_FILE_SIZE_BYTES`      | Taille maximale téléchargée depuis WebDAV (octets)                                     | `52428800`                                  |
+| `TIKA_URL`                      | URL de base facultative du serveur Apache Tika (`/tika/md` est ajouté automatiquement) | -                                           |
+| `EMBEDDING_PROVIDER`            | Provider d'embedding (`cloudflare`, `openai`, `ollama`)                                | `cloudflare`                                |
+| `EMBEDDING_MAX_TOKENS`          | Nombre maximal exact de tokens par chunk, comptés par le tokenizer du modèle           | `7000`                                      |
+| `EMBEDDING_TOKENIZER_MODEL`     | Identifiant Hugging Face du tokenizer d'un modèle personnalisé                         | -                                           |
+| `EMBEDDING_TOKENIZER_REVISION`  | Révision Hugging Face du tokenizer personnalisé                                        | `main`                                      |
+| `EMBEDDING_TOKENIZER_CACHE_DIR` | Répertoire local de cache des fichiers tokenizer                                       | `~/.cache/ocis-qdrant-indexer/tokenizers`   |
+| `CLOUDFLARE_ACCOUNT_ID`         | ID de compte Cloudflare                                                                | -                                           |
+| `CLOUDFLARE_API_TOKEN`          | Jeton API Cloudflare Workers AI                                                        | -                                           |
+| `CLOUDFLARE_MODEL`              | Modèle d'embedding Cloudflare                                                          | `@cf/baai/bge-m3`                           |
+| `MCP_PORT`                      | Port d'écoute du serveur MCP                                                           | `3000`                                      |
+| `MCP_AUTH_TOKEN`                | Jeton Bearer facultatif pour protéger les routes MCP                                   | - (authentification désactivée)             |
 
 Pour indexer un espace oCIS, définissez `OCIS_WEBDAV_URL` sur son endpoint
 `/dav/spaces/{space-id}/`. L'indexeur ajoute les chemins de fichiers à cette
