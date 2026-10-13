@@ -14,6 +14,21 @@ export interface ParsedDocument {
 }
 
 const ocrExtensions = new Set(["pdf", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp"]);
+let paddleOcrQueue = Promise.resolve();
+
+async function withPaddleOcrSlot<T>(operation: () => Promise<T>): Promise<T> {
+	let release!: () => void;
+	const previous = paddleOcrQueue;
+	paddleOcrQueue = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await previous;
+	try {
+		return await operation();
+	} finally {
+		release();
+	}
+}
 
 async function extractWithPaddleOcr(
 	filename: string,
@@ -24,37 +39,39 @@ async function extractWithPaddleOcr(
 		return { text: "", title };
 	}
 
-	const form = new FormData();
-	form.append(
-		"file",
-		new Blob([new Uint8Array(buffer)], { type: "application/octet-stream" }),
-		title,
-	);
-	const response = await fetch(`${config.paddleOcrUrl}/ocr`, {
-		method: "POST",
-		body: form,
-		signal: AbortSignal.timeout(config.paddleOcrTimeoutMs),
-	});
-	if (!response.ok) {
-		const details = (await response.text()).slice(0, 500);
-		if ([400, 413, 415, 422].includes(response.status)) {
-			console.warn(
-				`[Parser] Document non exploitable par PaddleOCR (${response.status}) pour ${filename}${details ? ` : ${details}` : ""}`,
-			);
-			return { text: "", title };
-		}
-		throw new Error(
-			`Échec PaddleOCR (${response.status} ${response.statusText}) pour ${filename}${details ? ` : ${details}` : ""}`,
+	return withPaddleOcrSlot(async () => {
+		const form = new FormData();
+		form.append(
+			"file",
+			new Blob([new Uint8Array(buffer)], { type: "application/octet-stream" }),
+			title,
 		);
-	}
-	const result = (await response.json()) as {
-		pages?: Array<{ page: number; text: string }>;
-	};
-	const text = (result.pages ?? [])
-		.map((page) => (page.text.trim() ? `## Page ${page.page}\n\n${page.text.trim()}` : ""))
-		.filter(Boolean)
-		.join("\n\n");
-	return { text, title };
+		const response = await fetch(`${config.paddleOcrUrl}/ocr`, {
+			method: "POST",
+			body: form,
+			signal: AbortSignal.timeout(config.paddleOcrTimeoutMs),
+		});
+		if (!response.ok) {
+			const details = (await response.text()).slice(0, 500);
+			if ([400, 413, 415, 422].includes(response.status)) {
+				console.warn(
+					`[Parser] Document non exploitable par PaddleOCR (${response.status}) pour ${filename}${details ? ` : ${details}` : ""}`,
+				);
+				return { text: "", title };
+			}
+			throw new Error(
+				`Échec PaddleOCR (${response.status} ${response.statusText}) pour ${filename}${details ? ` : ${details}` : ""}`,
+			);
+		}
+		const result = (await response.json()) as {
+			pages?: Array<{ page: number; text: string }>;
+		};
+		const text = (result.pages ?? [])
+			.map((page) => (page.text.trim() ? `## Page ${page.page}\n\n${page.text.trim()}` : ""))
+			.filter(Boolean)
+			.join("\n\n");
+		return { text, title };
+	});
 }
 
 export async function extractText(filename: string, buffer: Buffer): Promise<ParsedDocument> {

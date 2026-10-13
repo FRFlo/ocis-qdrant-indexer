@@ -86,6 +86,26 @@ describe("parser", () => {
 		).resolves.toMatchObject({ text: "## Page 1\n\nTexte de l'image" });
 	});
 
+	it("sérialise uniquement les appels PaddleOCR", async () => {
+		config.paddleOcrUrl = "http://paddleocr:8080";
+		let activeRequests = 0;
+		let maxActiveRequests = 0;
+		globalThis.fetch = mock(async () => {
+			activeRequests++;
+			maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			activeRequests--;
+			return Response.json({ pages: [{ page: 1, text: "Texte reconnu" }] });
+		}) as unknown as typeof fetch;
+
+		await Promise.all([
+			extractText("scan-1.png", Buffer.from([0x89, 0x50, 0x4e, 0x47])),
+			extractText("scan-2.png", Buffer.from([0x89, 0x50, 0x4e, 0x47])),
+		]);
+
+		expect(maxActiveRequests).toBe(1);
+	});
+
 	it("réessaie l'indexation lorsque PaddleOCR est indisponible", async () => {
 		config.paddleOcrUrl = "http://paddleocr:8080";
 		globalThis.fetch = mock(
@@ -95,6 +115,13 @@ describe("parser", () => {
 		await expect(extractText("scan.png", Buffer.from([0x89, 0x50, 0x4e, 0x47]))).rejects.toThrow(
 			"PaddleOCR (503",
 		);
+
+		globalThis.fetch = mock(async () =>
+			Response.json({ pages: [{ page: 1, text: "OCR toujours disponible" }] }),
+		) as unknown as typeof fetch;
+		await expect(
+			extractText("scan-suivant.png", Buffer.from([0x89, 0x50, 0x4e, 0x47])),
+		).resolves.toMatchObject({ text: "## Page 1\n\nOCR toujours disponible" });
 	});
 
 	it("découpe un texte correctement selon les paragraphes et la taille", () => {
