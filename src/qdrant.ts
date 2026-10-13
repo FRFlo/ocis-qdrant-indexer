@@ -69,6 +69,65 @@ export class QdrantManager {
 		return points[0]?.payload?.content_hash === contentHash;
 	}
 
+	async updateFileMetadata(path: string, metadata: OcisFileMetadata): Promise<void> {
+		const payload = Object.fromEntries(
+			Object.entries(metadata).filter(([, value]) => value !== undefined && value !== ""),
+		);
+		if (Object.keys(payload).length === 0) return;
+		await this.client.setPayload(this.collection, {
+			payload,
+			filter: {
+				should: this.pathVariants(path).map((value) => ({
+					key: "path",
+					match: { value },
+				})),
+			},
+			wait: true,
+		});
+	}
+
+	async reuseContentHash(
+		path: string,
+		nodeId: string,
+		contentHash: string,
+		metadata: OcisFileMetadata,
+		source = "ownCloud",
+	): Promise<boolean> {
+		const { points } = await this.client.scroll(this.collection, {
+			filter: { must: [{ key: "content_hash", match: { value: contentHash } }] },
+			limit: 256,
+			with_payload: true,
+			with_vector: true,
+		});
+		if (points.length === 0 || points.some((point) => !point.vector)) return false;
+		const copied = points.map((point) => {
+			const old = point.payload ?? {};
+			return {
+				id: this.pointId(path, Number(old.chunk_index ?? 0)),
+				vector: point.vector as number[],
+				payload: {
+					...old,
+					path,
+					node_id: nodeId,
+					filename: path.split("/").pop() || "",
+					content_hash: contentHash,
+					source,
+					...metadata,
+					indexed_at: new Date().toISOString(),
+				},
+			};
+		});
+		await this.client.upsert(this.collection, { wait: true, points: copied });
+		await this.client.delete(this.collection, {
+			filter: {
+				should: this.pathVariants(path).map((value) => ({ key: "path", match: { value } })),
+				must_not: [{ has_id: copied.map((point) => point.id) }],
+			},
+			wait: true,
+		});
+		return true;
+	}
+
 	async hasIndexedPath(path: string): Promise<boolean> {
 		const { points } = await this.client.scroll(this.collection, {
 			filter: {

@@ -83,7 +83,7 @@ export class NatsConsumer {
 	private ocis: OcisClient;
 	private tokenCounterFactory: () => Promise<TokenCounter>;
 	private initialScanStarted = false;
-	private indexingByPath = new Map<string, Promise<void>>();
+	private indexingByPath = new Map<string, Promise<"unchanged" | "updated" | "added">>();
 
 	constructor(
 		qdrant: QdrantManager,
@@ -308,9 +308,17 @@ export class NatsConsumer {
 		const buffer = await this.ocis.downloadFile(path);
 		const contentHash = createHash("sha256").update(buffer).digest("hex");
 		if (await this.qdrant.hasCurrentContentHash(path, contentHash)) {
+			await this.qdrant.updateFileMetadata?.(path, metadata);
 			return "unchanged";
 		}
 		const existed = this.qdrant.hasIndexedPath ? await this.qdrant.hasIndexedPath(path) : false;
+		if (
+			this.qdrant.reuseContentHash &&
+			(await this.qdrant.reuseContentHash(path, nodeId, contentHash, metadata, "ownCloud"))
+		) {
+			console.log(`[Indexer] embeddings réutilisés: ${path}`);
+			return existed ? "updated" : "added";
+		}
 
 		const filename = path.split("/").pop() || "";
 		const parsed = await extractText(filename, buffer);
