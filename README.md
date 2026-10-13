@@ -107,8 +107,11 @@ que si cette extraction est vide. Les images passent directement par PaddleOCR
 lorsque le service est configuré ; les autres fichiers binaires passent par
 Tika, puis par PaddleOCR si Tika n'extrait aucun texte. Les résultats sont repérés par page. L'indexeur
 n'envoie de fichier au service que lorsque `PADDLEOCR_URL` est explicitement
-défini. En production, utilisez le service privé `paddleocr` de la stack VPS ;
-le téléchargement initial des modèles peut retarder son état healthy.
+défini. En production, utilisez le service privé `paddleocr` de la stack VPS et
+montez un volume Docker persistant sur `/models` dans Dockhand : PaddleOCR y
+conserve ses poids dans `/models/.paddleocr`, ce qui évite de les télécharger à
+chaque recréation du conteneur. Le premier téléchargement peut retarder son état
+healthy.
 
 Lorsque `MCP_AUTH_TOKEN` est défini, les clients doivent envoyer
 `Authorization: Bearer <jeton>` sur `/mcp` (et `/api/v1/mcp`). Sans cette variable,

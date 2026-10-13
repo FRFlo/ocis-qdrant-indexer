@@ -20,8 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py ./
 
 # PaddleOCR 2.x stores its downloaded weights under ~/.paddleocr.
-# Preload them into the image so container restarts do not download them again.
-RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='fr', use_gpu=False, show_log=False)"
+VOLUME ["/models"]
 
 EXPOSE 8080
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
