@@ -12,6 +12,8 @@ export interface Config {
 	ocisRequestTimeoutMs: number;
 	ocisMaxFileSizeBytes: number;
 	tikaUrl?: string;
+	paddleOcrUrl?: string;
+	paddleOcrTimeoutMs: number;
 	embeddingProvider: "cloudflare" | "openai" | "ollama";
 	embeddingMaxTokens: number;
 	embeddingTokenizerModel?: string;
@@ -78,6 +80,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 			"OCIS_MAX_FILE_SIZE_BYTES",
 		),
 		tikaUrl: env.TIKA_URL?.replace(/\/+$/, "") || undefined,
+		paddleOcrUrl: env.PADDLEOCR_URL?.replace(/\/+$/, "") || undefined,
+		paddleOcrTimeoutMs: positiveInteger(env.PADDLEOCR_TIMEOUT_MS, 300_000, "PADDLEOCR_TIMEOUT_MS"),
 		embeddingProvider: provider as Config["embeddingProvider"],
 		embeddingMaxTokens,
 		embeddingTokenizerModel: env.EMBEDDING_TOKENIZER_MODEL?.trim() || undefined,

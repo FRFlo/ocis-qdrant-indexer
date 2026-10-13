@@ -5,10 +5,12 @@ import { chunkText, extractText } from "./parser.ts";
 const countTestTokens = (text: string) => Array.from(text).length;
 const originalFetch = globalThis.fetch;
 const originalTikaUrl = config.tikaUrl;
+const originalPaddleOcrUrl = config.paddleOcrUrl;
 
 afterEach(() => {
 	globalThis.fetch = originalFetch;
 	config.tikaUrl = originalTikaUrl;
+	config.paddleOcrUrl = originalPaddleOcrUrl;
 });
 
 describe("parser", () => {
@@ -37,6 +39,62 @@ describe("parser", () => {
 		const parsed = await extractText("sample.pdf", Buffer.from(pdf, "ascii"));
 
 		expect(parsed.text).toContain("Hello OpenDataLoader PDF");
+	});
+
+	it("utilise PaddleOCR si l'extraction native du PDF est vide", async () => {
+		const content = "BT /F1 18 Tf 72 720 Td ( ) Tj ET";
+		const objects = [
+			"<< /Type /Catalog /Pages 2 0 R >>",
+			"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+			"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+			`<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+		];
+		let pdf = "%PDF-1.4\n";
+		const offsets = [0];
+		for (const [index, object] of objects.entries()) {
+			offsets.push(Buffer.byteLength(pdf, "ascii"));
+			pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+		}
+		const xrefOffset = Buffer.byteLength(pdf, "ascii");
+		pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+		for (const offset of offsets.slice(1)) {
+			pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+		}
+		pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+		const fetchMock = mock(async () =>
+			Response.json({ pages: [{ page: 1, text: "Texte reconnu par PaddleOCR" }] }),
+		);
+		config.paddleOcrUrl = "http://paddleocr:8080";
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const parsed = await extractText("scan.pdf", Buffer.from(pdf, "ascii"));
+
+		expect(parsed.text).toContain("## Page 1");
+		expect(parsed.text).toContain("Texte reconnu par PaddleOCR");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("essaie PaddleOCR sur une image binaire et conserve sa page", async () => {
+		config.paddleOcrUrl = "http://paddleocr:8080";
+		globalThis.fetch = mock(async () =>
+			Response.json({ pages: [{ page: 1, text: "Texte de l'image" }] }),
+		) as unknown as typeof fetch;
+
+		await expect(
+			extractText("scan.png", Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00])),
+		).resolves.toMatchObject({ text: "## Page 1\n\nTexte de l'image" });
+	});
+
+	it("réessaie l'indexation lorsque PaddleOCR est indisponible", async () => {
+		config.paddleOcrUrl = "http://paddleocr:8080";
+		globalThis.fetch = mock(
+			async () => new Response("Service unavailable", { status: 503 }),
+		) as unknown as typeof fetch;
+
+		await expect(extractText("scan.png", Buffer.from([0x89, 0x50, 0x4e, 0x47]))).rejects.toThrow(
+			"PaddleOCR (503",
+		);
 	});
 
 	it("découpe un texte correctement selon les paragraphes et la taille", () => {

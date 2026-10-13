@@ -13,6 +13,50 @@ export interface ParsedDocument {
 	title?: string;
 }
 
+const ocrExtensions = new Set(["pdf", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp"]);
+
+async function extractWithPaddleOcr(
+	filename: string,
+	buffer: Buffer,
+	title: string,
+): Promise<ParsedDocument> {
+	if (!config.paddleOcrUrl || !ocrExtensions.has(filename.split(".").pop()?.toLowerCase() || "")) {
+		return { text: "", title };
+	}
+
+	const form = new FormData();
+	form.append(
+		"file",
+		new Blob([new Uint8Array(buffer)], { type: "application/octet-stream" }),
+		title,
+	);
+	const response = await fetch(`${config.paddleOcrUrl}/ocr`, {
+		method: "POST",
+		body: form,
+		signal: AbortSignal.timeout(config.paddleOcrTimeoutMs),
+	});
+	if (!response.ok) {
+		const details = (await response.text()).slice(0, 500);
+		if ([400, 413, 415, 422].includes(response.status)) {
+			console.warn(
+				`[Parser] Document non exploitable par PaddleOCR (${response.status}) pour ${filename}${details ? ` : ${details}` : ""}`,
+			);
+			return { text: "", title };
+		}
+		throw new Error(
+			`Échec PaddleOCR (${response.status} ${response.statusText}) pour ${filename}${details ? ` : ${details}` : ""}`,
+		);
+	}
+	const result = (await response.json()) as {
+		pages?: Array<{ page: number; text: string }>;
+	};
+	const text = (result.pages ?? [])
+		.map((page) => (page.text.trim() ? `## Page ${page.page}\n\n${page.text.trim()}` : ""))
+		.filter(Boolean)
+		.join("\n\n");
+	return { text, title };
+}
+
 export async function extractText(filename: string, buffer: Buffer): Promise<ParsedDocument> {
 	const ext = filename.split(".").pop()?.toLowerCase() || "";
 	const title = filename.split(/[\\/]/).pop() || filename;
@@ -22,15 +66,31 @@ export async function extractText(filename: string, buffer: Buffer): Promise<Par
 		const inputPath = join(workDir, title || "document.pdf");
 		try {
 			await writeFile(inputPath, buffer);
-			const text = await convert(inputPath, {
-				format: "markdown",
-				toStdout: true,
-				quiet: true,
-			});
-			return { text: text.trim(), title: filename };
+			let text: string;
+			try {
+				text = await convert(inputPath, {
+					format: "markdown",
+					toStdout: true,
+					quiet: true,
+				});
+			} catch (error) {
+				if (config.paddleOcrUrl) {
+					console.warn(`[Parser] Extraction PDF native échouée, essai OCR pour ${filename}.`);
+					return await extractWithPaddleOcr(filename, buffer, filename);
+				}
+				throw error;
+			}
+			const extracted = text.trim();
+			return extracted
+				? { text: extracted, title: filename }
+				: extractWithPaddleOcr(filename, buffer, filename);
 		} finally {
 			await rm(workDir, { recursive: true, force: true });
 		}
+	}
+
+	if (["png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp"].includes(ext) && config.paddleOcrUrl) {
+		return extractWithPaddleOcr(filename, buffer, title);
 	}
 
 	try {
@@ -41,7 +101,7 @@ export async function extractText(filename: string, buffer: Buffer): Promise<Par
 		// Non-UTF-8 content is delegated to Tika when it is configured.
 	}
 
-	if (!config.tikaUrl) return { text: "", title };
+	if (!config.tikaUrl) return extractWithPaddleOcr(filename, buffer, title);
 
 	const endpoint = config.tikaUrl.endsWith("/tika/md")
 		? config.tikaUrl
@@ -61,11 +121,12 @@ export async function extractText(filename: string, buffer: Buffer): Promise<Par
 		const message = `Échec de l'extraction Tika (${response.status} ${response.statusText}) pour ${filename}${details ? ` : ${details}` : ""}`;
 		if ([400, 415, 422, 500].includes(response.status)) {
 			console.warn(`[Parser] Fichier non pris en charge par Tika : ${message}`);
-			return { text: "", title };
+			return extractWithPaddleOcr(filename, buffer, title);
 		}
 		throw new Error(message);
 	}
-	return { text: (await response.text()).trim(), title };
+	const extracted = (await response.text()).trim();
+	return extracted ? { text: extracted, title } : extractWithPaddleOcr(filename, buffer, title);
 }
 
 export interface Chunk {

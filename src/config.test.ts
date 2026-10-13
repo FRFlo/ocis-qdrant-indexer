@@ -39,4 +39,20 @@ describe("loadConfig", () => {
 		expect(loadConfig({ TIKA_URL: "http://tika:9998/" }).tikaUrl).toBe("http://tika:9998");
 		expect(loadConfig({}).tikaUrl).toBeUndefined();
 	});
+
+	it("accepts an optional PaddleOCR service URL", () => {
+		expect(
+			loadConfig({
+				PADDLEOCR_URL: "http://paddleocr:8080/",
+				PADDLEOCR_TIMEOUT_MS: "600000",
+			}),
+		).toMatchObject({
+			paddleOcrUrl: "http://paddleocr:8080",
+			paddleOcrTimeoutMs: 600_000,
+		});
+		expect(loadConfig({})).toMatchObject({
+			paddleOcrUrl: undefined,
+			paddleOcrTimeoutMs: 300_000,
+		});
+	});
 });

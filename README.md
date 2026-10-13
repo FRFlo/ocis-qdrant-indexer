@@ -32,7 +32,7 @@ Sidecar temps réel d'ingestion et de recherche sémantique (RAG) pour **ownClou
 - **Upsert propre & Zéro doublon :** Lorsqu'un fichier est modifié dans ownCloud, ses anciens vecteurs sont supprimés avant de réinsérer les nouveaux. En cas de suppression du fichier (`ItemTrashed` / `ItemPurged`), les vecteurs sont automatiquement purgés.
 - **Embeddings sans coût VPS :** Utilise Cloudflare Workers AI (`@cf/baai/bge-m3`, multilingue, 1024 dimensions) dans la limite du Free Tier quotidien (~9M tokens/jour). Support alternatif pour OpenAI (`text-embedding-3-small`) ou Ollama local.
 - **Extraction PDF :** Utilise [OpenDataLoader PDF](https://github.com/opendataloader-project/opendataloader-pdf) pour extraire le texte en Markdown, avec Java 11+ requis (inclus dans l'image Docker).
-- **Extraction générique :** Les fichiers sont d’abord décodés en UTF-8 strict, sans se fier à leur extension. Pour tout contenu binaire, `TIKA_URL` (optionnel) permet de tenter une extraction via un serveur Apache Tika ; sans Tika ou si aucun texte n’est extractible, le fichier n’est pas indexé.
+- **Extraction générique et OCR :** Les fichiers sont d’abord décodés en UTF-8 strict, sans se fier à leur extension. `TIKA_URL` (optionnel) tente l’extraction des contenus binaires ; lorsque le texte reste vide, `PADDLEOCR_URL` (optionnel) délègue les images et PDF scannés à PaddleOCR, avec un en-tête de page dans le texte indexé.
 - **Découpage hiérarchique :** Parse le Markdown/GFM en AST, construit une arborescence H1 à H6 et répète les titres parents dans chaque chunk. Préserve les blocs sous le budget ; subdivise les blocs trop longs en conservant les en-têtes de tableaux. Le budget par défaut de 7 000 tokens est compté avec le tokenizer du modèle : tokenizer BGE-M3 officiel Hugging Face (révision épinglée) ou `cl100k_base` pour les modèles d’embedding OpenAI pris en charge. Les fichiers du tokenizer sont téléchargés puis mis en cache ; les modèles personnalisés doivent fournir leur identifiant Hugging Face dans `EMBEDDING_TOKENIZER_MODEL`.
 - **Serveur MCP Streamable HTTP :** Expose nativement l'outil `search_owncloud_docs` sur `POST /mcp` compatible avec Executor, Claude Desktop et Hermes Agent.
 
@@ -62,6 +62,8 @@ Recherche sémantique dans les cours et documents indexés depuis ownCloud.
 | `OCIS_PUBLIC_URL`               | URL publique de l'interface ownCloud, utilisée pour construire le lien user-facing     | -                                           |
 | `INDEX_CONCURRENCY`             | Nombre maximal de fichiers traités simultanément au scan initial                       | `4`                                         |
 | `TIKA_URL`                      | URL de base facultative du serveur Apache Tika (`/tika/md` est ajouté automatiquement) | -                                           |
+| `PADDLEOCR_URL`                 | URL facultative du service OCR PaddleOCR (ex. `http://paddleocr:8080`)                 | -                                           |
+| `PADDLEOCR_TIMEOUT_MS`          | Délai maximal d'une requête OCR (ms)                                                   | `300000`                                    |
 | `EMBEDDING_PROVIDER`            | Provider d'embedding (`cloudflare`, `openai`, `ollama`)                                | `cloudflare`                                |
 | `EMBEDDING_MAX_TOKENS`          | Nombre maximal exact de tokens par chunk, comptés par le tokenizer du modèle           | `7000`                                      |
 | `EMBEDDING_TOKENIZER_MODEL`     | Identifiant Hugging Face du tokenizer d'un modèle personnalisé                         | -                                           |
@@ -97,6 +99,16 @@ Tika avec `TIKA_URL=http://tika:9998`. Le service tente alors l'endpoint
 une erreur de parsing (400, 415, 422 ou 500), le fichier est journalisé comme
 non parseable et ignoré. Les erreurs de disponibilité du serveur (réseau,
 429, 503, etc.) restent des erreurs d'indexation et sont réessayées.
+
+Pour l'OCR local, le dépôt fournit un service CPU dans `paddleocr/`. Il accepte
+les images PNG/JPEG/WebP/TIFF/BMP et les PDF jusqu'à 100 pages et 50 Mio par
+fichier. Les PDF passent d'abord par OpenDataLoader ; PaddleOCR n'est sollicité
+que si cette extraction est vide. Les images passent directement par PaddleOCR
+lorsque le service est configuré ; les autres fichiers binaires passent par
+Tika, puis par PaddleOCR si Tika n'extrait aucun texte. Les résultats sont repérés par page. L'indexeur
+n'envoie de fichier au service que lorsque `PADDLEOCR_URL` est explicitement
+défini. En production, utilisez le service privé `paddleocr` de la stack VPS ;
+le téléchargement initial des modèles peut retarder son état healthy.
 
 Lorsque `MCP_AUTH_TOKEN` est défini, les clients doivent envoyer
 `Authorization: Bearer <jeton>` sur `/mcp` (et `/api/v1/mcp`). Sans cette variable,
