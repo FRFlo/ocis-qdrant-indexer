@@ -49,6 +49,25 @@ const OCIS_STREAM = "main-queue";
 const OCIS_SUBJECT = "main-queue";
 const EVENT_TYPE_METADATA = "eventtype";
 
+export function decodeOcisBusMessage(rawMessage: Uint8Array): {
+	eventName: string;
+	data: OcisEvent;
+} {
+	const busMessage: OcisBusMessage = JSON.parse(Buffer.from(rawMessage).toString("utf8"));
+	const eventName = busMessage.Metadata?.[EVENT_TYPE_METADATA];
+	if (!eventName || busMessage.Payload === undefined) {
+		throw new Error("Message oCIS invalide : eventtype ou payload manquant.");
+	}
+	const rawData =
+		typeof busMessage.Payload === "string"
+			? Buffer.from(busMessage.Payload, "base64").toString("utf8")
+			: Buffer.from(busMessage.Payload).toString("utf8");
+	return {
+		eventName,
+		data: JSON.parse(rawData) as OcisEvent,
+	};
+}
+
 function normalizeFilePath(path: string): string {
 	return path
 		.replace(/\\/g, "/")
@@ -126,17 +145,7 @@ export class NatsConsumer {
 			(async () => {
 				for await (const m of this.messages!) {
 					try {
-						const busMessage: OcisBusMessage = JSON.parse(m.data.toString());
-						const eventName = busMessage.Metadata?.[EVENT_TYPE_METADATA];
-						if (!eventName || busMessage.Payload === undefined) {
-							throw new Error("Message oCIS invalide : eventtype ou payload manquant.");
-						}
-						const rawData =
-							typeof busMessage.Payload === "string"
-								? Buffer.from(busMessage.Payload, "base64").toString("utf8")
-								: Buffer.from(busMessage.Payload).toString("utf8");
-						const data: OcisEvent = JSON.parse(rawData);
-
+						const { eventName, data } = decodeOcisBusMessage(m.data);
 						await this.handleEvent(eventName, data);
 						m.ack();
 					} catch (err) {

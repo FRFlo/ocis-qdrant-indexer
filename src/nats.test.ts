@@ -1,12 +1,26 @@
 import { describe, expect, it, mock } from "bun:test";
 import { config } from "./config.ts";
-import { NatsConsumer } from "./nats.ts";
+import { decodeOcisBusMessage, NatsConsumer } from "./nats.ts";
 import type { OcisClient } from "./ocis.ts";
 import type { QdrantManager } from "./qdrant.ts";
 
 const testTokenCounterFactory = async () => (text: string) => Array.from(text).length;
 
 describe("NatsConsumer", () => {
+	it("décode les octets NATS UTF-8 avant d'analyser l'enveloppe JSON", () => {
+		const event = { FileRef: { path: "document.pdf" } };
+		const envelope = {
+			Metadata: { eventtype: "events.FileUploaded" },
+			Payload: Buffer.from(JSON.stringify(event)).toString("base64"),
+		};
+		const rawMessage = new Uint8Array(Buffer.from(JSON.stringify(envelope), "utf8"));
+
+		expect(decodeOcisBusMessage(rawMessage)).toEqual({
+			eventName: "events.FileUploaded",
+			data: event,
+		});
+	});
+
 	it("retries the initial WebDAV scan after a connection refusal", async () => {
 		let attempts = 0;
 		const ocis = {
