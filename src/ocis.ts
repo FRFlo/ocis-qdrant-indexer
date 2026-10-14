@@ -123,10 +123,16 @@ export class OcisClient {
 
 		const url = this.fileUrl(segments.join("/"));
 
-		const res = await this.fetchWebdav(url, {
-			headers: this.authHeaders(),
-			signal: AbortSignal.timeout(config.ocisRequestTimeoutMs),
-		});
+		let res: Response;
+		for (let attempt = 0; ; attempt++) {
+			res = await this.fetchWebdav(url, {
+				headers: this.authHeaders(),
+				signal: AbortSignal.timeout(config.ocisRequestTimeoutMs),
+			});
+			if (res.status !== 425 || attempt >= 2) break;
+			await res.body?.cancel();
+			await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+		}
 		if (!res.ok) {
 			throw new Error(this.webdavError("du téléchargement", res, path));
 		}

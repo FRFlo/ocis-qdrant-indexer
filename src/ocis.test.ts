@@ -46,6 +46,20 @@ describe("OcisClient", () => {
 		expect(fetchMock.mock.calls[0]?.[0]).toBe(`${spaceUrl}folder/document.txt`);
 	});
 
+	it("retries transient 425 responses when downloading", async () => {
+		const fetchMock = mock(async () => {
+			if (fetchMock.mock.calls.length < 3) {
+				return new Response(null, { status: 425, statusText: "Too Early" });
+			}
+			return new Response("document");
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const client = new OcisClient();
+
+		await expect(client.downloadFile("document.txt")).resolves.toEqual(Buffer.from("document"));
+		expect(fetchMock).toHaveBeenCalledTimes(3);
+	});
+
 	it("retries an OIDC/app token as Basic after Bearer is rejected", async () => {
 		config.ocisWebdavUrl = "https://owncloud.example.org/dav/spaces/test-space/";
 		config.ocisPassword = undefined;
