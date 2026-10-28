@@ -50,18 +50,36 @@ export function decodeOcisBusMessage(rawMessage: Uint8Array): {
 	data: OcisEvent;
 } {
 	const busMessage: OcisBusMessage = JSON.parse(Buffer.from(rawMessage).toString("utf8"));
-	const eventName = busMessage.Metadata?.[EVENT_TYPE_METADATA];
-	if (!eventName || busMessage.Payload === undefined) {
-		throw new Error("Message oCIS invalide : eventtype ou payload manquant.");
+	if (busMessage.Payload === undefined) {
+		throw new Error("Message oCIS invalide : payload manquant.");
 	}
-	const rawData =
-		typeof busMessage.Payload === "string"
-			? Buffer.from(busMessage.Payload, "base64").toString("utf8")
-			: Buffer.from(busMessage.Payload).toString("utf8");
-	return {
-		eventName,
-		data: JSON.parse(rawData) as OcisEvent,
-	};
+	let payload: unknown;
+	if (typeof busMessage.Payload === "string") {
+		try {
+			payload = JSON.parse(busMessage.Payload);
+		} catch {
+			payload = JSON.parse(Buffer.from(busMessage.Payload, "base64").toString("utf8"));
+		}
+	} else {
+		payload = JSON.parse(Buffer.from(busMessage.Payload).toString("utf8"));
+	}
+
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+		throw new Error("Message oCIS invalide : payload JSON inattendu.");
+	}
+	const envelope = payload as { Type?: unknown; Event?: unknown };
+	const event =
+		envelope.Event && typeof envelope.Event === "object" && !Array.isArray(envelope.Event)
+			? (envelope.Event as OcisEvent)
+			: (payload as OcisEvent);
+	const eventName =
+		busMessage.Metadata?.[EVENT_TYPE_METADATA] ??
+		(typeof envelope.Type === "string" ? envelope.Type : undefined) ??
+		(typeof event.Type === "string" ? event.Type : undefined);
+	if (!eventName) {
+		throw new Error("Message oCIS invalide : eventtype manquant.");
+	}
+	return { eventName, data: event };
 }
 
 export class NatsConsumer {
@@ -75,7 +93,8 @@ export class NatsConsumer {
 	}
 
 	async start(): Promise<void> {
-		console.log(`[NATS] Connexion au bus oCIS sur ${config.natsUrl}...`);
+		// NATS_URL may contain credentials; never write it to application logs.
+		console.log("[NATS] Connexion au bus oCIS...");
 		this.startInitialReconciliation();
 		try {
 			this.nc = await connect({ servers: config.natsUrl });
@@ -117,13 +136,16 @@ export class NatsConsumer {
 			}
 			const consumer = await js.consumers.get(stream, durable);
 			this.messages = await consumer.consume();
+			console.log(`[NATS] Abonné au stream ${stream}, sujet ${OCIS_SUBJECT}.`);
 
 			(async () => {
 				for await (const m of this.messages!) {
 					try {
 						const { eventName, data } = decodeOcisBusMessage(m.data);
+						console.info(`[NATS] Événement reçu: ${eventName}.`);
 						await this.handleEvent(eventName, data);
 						m.ack();
+						console.info(`[NATS] Événement traité: ${eventName}.`);
 					} catch (err) {
 						console.error("[NATS] Erreur traitement événement:", err);
 						m.nak(5000);

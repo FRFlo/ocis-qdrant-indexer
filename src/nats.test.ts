@@ -24,6 +24,38 @@ describe("NatsConsumer", () => {
 		});
 	});
 
+	it("décode les événements oCIS enveloppés dans le champ Event", () => {
+		const event = {
+			FileRef: {
+				path: "./Notes/plan.md",
+				resource_id: { space_id: "alice-drive", opaque_id: "file-1" },
+			},
+		};
+		const envelope = {
+			Metadata: { eventtype: "events.UploadReady" },
+			Payload: Buffer.from(JSON.stringify({ Type: "events.UploadReady", Event: event })).toString(
+				"base64",
+			),
+		};
+
+		expect(decodeOcisBusMessage(Buffer.from(JSON.stringify(envelope)))).toEqual({
+			eventName: "events.UploadReady",
+			data: event,
+		});
+	});
+
+	it("accepts an unencoded JSON payload and its event type", () => {
+		const event = { FileRef: { path: "Notes/plan.md" } };
+		const envelope = {
+			Payload: JSON.stringify({ Type: "events.FileUploaded", Event: event }),
+		};
+
+		expect(decodeOcisBusMessage(Buffer.from(JSON.stringify(envelope)))).toEqual({
+			eventName: "events.FileUploaded",
+			data: event,
+		});
+	});
+
 	it("reconciles previously registered users at process startup exactly once", async () => {
 		const userIndexer = mockUserIndexer();
 		const consumer = new NatsConsumer(userIndexer);
