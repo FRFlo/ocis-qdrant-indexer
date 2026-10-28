@@ -10,22 +10,112 @@ export interface OcisFileMetadata {
 	etag?: string;
 }
 
+export interface OcisDrive {
+	id: string;
+	name: string;
+	driveType?: string;
+}
+
+export interface OcisUserContext {
+	userId: string;
+	username: string;
+	drives: OcisDrive[];
+}
+
+export class OcisApiError extends Error {
+	status: number;
+
+	constructor(message: string, status: number) {
+		super(message);
+		this.name = "OcisApiError";
+		this.status = status;
+	}
+}
+
 export class OcisClient {
 	private baseUrl: string;
 	private authHeader: string;
+	private username: string;
+	private graphBaseUrl: string;
+	private pat: string;
 
-	constructor() {
-		this.baseUrl = config.ocisWebdavUrl;
-		if (config.ocisToken) {
-			this.authHeader = `Bearer ${config.ocisToken}`;
-		} else if (config.ocisUsername && config.ocisPassword) {
-			const creds = Buffer.from(`${config.ocisUsername}:${config.ocisPassword}`).toString("base64");
-			this.authHeader = `Basic ${creds}`;
-		} else {
-			throw new Error(
-				"Authentification WebDAV absente : définissez OCIS_TOKEN (Bearer) ou OCIS_PASSWORD (Basic).",
+	constructor(credentials: { username: string; pat: string; webdavUrl?: string }) {
+		this.baseUrl = credentials.webdavUrl ?? config.ocisWebdavUrl;
+		this.username = credentials.username;
+		this.pat = credentials.pat;
+		this.graphBaseUrl = config.ocisGraphUrl;
+		const encodedCredentials = Buffer.from(`${credentials.username}:${credentials.pat}`).toString(
+			"base64",
+		);
+		this.authHeader = `Basic ${encodedCredentials}`;
+	}
+
+	async getUserContext(): Promise<OcisUserContext> {
+		const user = (await this.fetchGraph(`${this.graphBaseUrl}/me`)) as { id?: unknown };
+		if (typeof user.id !== "string" || !user.id) {
+			throw new Error("La réponse Graph ownCloud ne contient pas l'identifiant de l'utilisateur.");
+		}
+
+		const driveRecords: Array<{ id?: unknown; name?: unknown; driveType?: unknown }> = [];
+		const base = new URL(this.graphBaseUrl);
+		let nextUrl: string | undefined = `${this.graphBaseUrl}/me/drives`;
+		while (nextUrl) {
+			const pageUrl = new URL(nextUrl, this.graphBaseUrl);
+			if (
+				pageUrl.origin !== base.origin ||
+				!pageUrl.pathname.startsWith(`${base.pathname.replace(/\/+$/, "")}/`)
+			) {
+				throw new Error("La pagination Graph ownCloud pointe vers une URL inattendue.");
+			}
+			const page = (await this.fetchGraph(pageUrl.toString())) as {
+				value?: Array<{ id?: unknown; name?: unknown; driveType?: unknown }>;
+				"@odata.nextLink"?: unknown;
+			};
+			if (!Array.isArray(page.value)) {
+				throw new Error("La réponse Graph ownCloud ne contient pas de liste d'espaces.");
+			}
+			driveRecords.push(...page.value);
+			nextUrl = typeof page["@odata.nextLink"] === "string" ? page["@odata.nextLink"] : undefined;
+		}
+
+		return {
+			userId: user.id,
+			username: this.username,
+			drives: driveRecords.flatMap((drive) =>
+				typeof drive.id === "string" && drive.id
+					? [
+							{
+								id: drive.id,
+								name: typeof drive.name === "string" ? drive.name : drive.id,
+								driveType: typeof drive.driveType === "string" ? drive.driveType : undefined,
+							},
+						]
+					: [],
+			),
+		};
+	}
+
+	private async fetchGraph(url: string): Promise<unknown> {
+		const response = await fetch(url, {
+			headers: this.authHeaders(),
+			signal: AbortSignal.timeout(config.ocisRequestTimeoutMs),
+		});
+		if (!response.ok) {
+			throw new OcisApiError(
+				`Échec de la requête Graph ownCloud (${response.status} ${response.statusText}).`,
+				response.status,
 			);
 		}
+		return response.json();
+	}
+
+	forDrive(driveId: string): OcisClient {
+		const root = `${new URL(this.baseUrl).origin}/dav/spaces/${encodeURIComponent(driveId)}/`;
+		return new OcisClient({
+			username: this.username,
+			pat: this.pat,
+			webdavUrl: root,
+		});
 	}
 
 	async listFiles(): Promise<string[]> {
@@ -205,7 +295,7 @@ export class OcisClient {
 			new URL(baseUrl).pathname,
 		);
 		const segments = [
-			...(isLegacyFilesEndpoint ? [config.ocisUsername] : []),
+			...(isLegacyFilesEndpoint ? [this.username] : []),
 			...path.split("/").filter(Boolean),
 		];
 		const encodedPath = segments.map(encodeURIComponent).join("/");
@@ -217,25 +307,11 @@ export class OcisClient {
 	}
 
 	private async fetchWebdav(url: string, init: RequestInit): Promise<Response> {
-		const res = await fetch(url, init);
-		if (res.status !== 401 || !config.ocisToken || !config.ocisUsername) return res;
-
-		await res.body?.cancel();
-		const credentials = Buffer.from(`${config.ocisUsername}:${config.ocisToken}`).toString(
-			"base64",
-		);
-		return fetch(url, {
-			...init,
-			headers: { ...this.authHeaders(), Authorization: `Basic ${credentials}` },
-			signal: AbortSignal.timeout(config.ocisRequestTimeoutMs),
-		});
+		return fetch(url, init);
 	}
 
 	private webdavError(operation: string, res: Response, resource: string): string {
-		const hint =
-			res.status === 401
-				? " Vérifiez OCIS_USERNAME et OCIS_PASSWORD, ou utilisez un OCIS_TOKEN valide pour WebDAV."
-				: "";
+		const hint = res.status === 401 ? " Vérifiez le nom d'utilisateur ownCloud et son PAT." : "";
 		return `Échec ${operation} WebDAV (${res.status} ${res.statusText}) pour ${resource}.${hint}`;
 	}
 

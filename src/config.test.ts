@@ -15,7 +15,6 @@ describe("loadConfig", () => {
 		expect(config.ocisRequestTimeoutMs).toBe(30_000);
 		expect(config.ocisMaxFileSizeBytes).toBe(50 * 1024 * 1024);
 		expect(config.embeddingMaxTokens).toBe(7_000);
-		expect(config.indexConcurrency).toBe(4);
 	});
 
 	it("accepts a custom embedding input token budget", () => {
@@ -54,5 +53,32 @@ describe("loadConfig", () => {
 			paddleOcrUrl: undefined,
 			paddleOcrTimeoutMs: 300_000,
 		});
+	});
+
+	it("configures Graph API and durable user credential storage", () => {
+		expect(
+			loadConfig({
+				OCIS_WEBDAV_URL: "https://owncloud.example/remote.php/dav/files",
+				OCIS_GRAPH_URL: "https://owncloud.example/graph/v1.0/",
+				USER_STORE_PATH: "/var/lib/ocis-indexer/users.sqlite",
+				USER_STORE_ENCRYPTION_KEY: "test-key",
+			}),
+		).toMatchObject({
+			ocisGraphUrl: "https://owncloud.example/graph/v1.0",
+			userStorePath: "/var/lib/ocis-indexer/users.sqlite",
+			userStoreEncryptionKey: "test-key",
+		});
+	});
+
+	it("does not expose legacy shared ownCloud credentials in configuration", () => {
+		const configuration = loadConfig({
+			OCIS_USERNAME: "admin",
+			OCIS_PASSWORD: "old-password",
+			OCIS_TOKEN: "old-token",
+		});
+
+		expect(configuration).not.toHaveProperty("ocisUsername");
+		expect(configuration).not.toHaveProperty("ocisPassword");
+		expect(configuration).not.toHaveProperty("ocisToken");
 	});
 });

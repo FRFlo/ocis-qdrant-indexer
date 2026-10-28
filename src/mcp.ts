@@ -1,21 +1,32 @@
-import { timingSafeEqual } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import { config } from "./config.ts";
+import {
+	authenticateBasicRequest,
+	type AuthenticatedPrincipal,
+	type BasicCredentials,
+} from "./auth.ts";
+import { OcisApiError } from "./ocis.ts";
 import type { QdrantManager } from "./qdrant.ts";
+import type { UserIndexer } from "./user-indexer.ts";
 
-export function createMcpServer(qdrant: QdrantManager) {
-	const sessions = new Map<
-		string,
-		{ server: McpServer; transport: WebStandardStreamableHTTPServerTransport }
-	>();
+interface McpSession {
+	userId: string;
+	server: McpServer;
+	transport: WebStandardStreamableHTTPServerTransport;
+	updateCredentials: (credentials: BasicCredentials) => void;
+}
 
-	function buildSession() {
+export function createMcpServer(qdrant: QdrantManager, userIndexer: UserIndexer) {
+	const sessions = new Map<string, McpSession>();
+
+	function buildSession(userId: string, credentials: BasicCredentials): McpSession {
 		const server = new McpServer({
 			name: "ocis-qdrant-rag",
 			version: "1.0.0",
 		});
+		let currentCredentials = credentials;
 
 		// Outil 1 : Recherche sémantique dans les documents ownCloud
 		server.registerTool(
@@ -42,7 +53,7 @@ export function createMcpServer(qdrant: QdrantManager) {
 			},
 			async ({ query, limit, path_prefix }) => {
 				try {
-					const results = await qdrant.search(query, limit, path_prefix);
+					const results = await userIndexer.search(currentCredentials, query, limit, path_prefix);
 					if (results.length === 0) {
 						return {
 							content: [
@@ -86,12 +97,51 @@ export function createMcpServer(qdrant: QdrantManager) {
 			},
 		);
 
+		server.registerTool(
+			"sync_owncloud_docs",
+			{
+				description:
+					"Synchronise les fichiers ownCloud accessibles par le compte authentifié vers son index privé",
+				inputSchema: {},
+				annotations: { readOnlyHint: false, openWorldHint: false },
+			},
+			async () => {
+				try {
+					const result = await userIndexer.sync(currentCredentials);
+					return {
+						content: [
+							{
+								type: "text",
+								text:
+									`Synchronisation terminée pour ${result.spaces} espace(s): ` +
+									`${result.checked} fichier(s) vérifié(s), ${result.indexed} indexé(s), ` +
+									`${result.deleted} supprimé(s).`,
+							},
+						],
+					};
+				} catch (err: unknown) {
+					const message = err instanceof Error ? err.message : String(err);
+					return {
+						isError: true,
+						content: [{ type: "text", text: `Erreur de synchronisation ownCloud: ${message}` }],
+					};
+				}
+			},
+		);
+
 		const transport = new WebStandardStreamableHTTPServerTransport({
 			sessionIdGenerator: () => crypto.randomUUID(),
 		});
 
 		server.connect(transport);
-		return { server, transport };
+		return {
+			userId,
+			server,
+			transport,
+			updateCredentials(nextCredentials) {
+				currentCredentials = nextCredentials;
+			},
+		};
 	}
 
 	Bun.serve({
@@ -101,19 +151,45 @@ export function createMcpServer(qdrant: QdrantManager) {
 
 			// Endpoint MCP Streamable HTTP standard
 			if (url.pathname === "/mcp" || url.pathname === "/api/v1/mcp") {
-				const authToken = process.env.MCP_AUTH_TOKEN;
-				if (authToken && !hasValidBearerToken(req, authToken)) {
-					return new Response("Unauthorized", {
-						status: 401,
-						headers: { "WWW-Authenticate": "Bearer" },
-					});
+				let principal: AuthenticatedPrincipal;
+				try {
+					const resolved = await authenticateBasicRequest(req, (credentials) =>
+						userIndexer.authenticate(credentials),
+					);
+					if (!resolved) {
+						return new Response("Unauthorized", {
+							status: 401,
+							headers: { "WWW-Authenticate": 'Basic realm="ownCloud MCP"' },
+						});
+					}
+					principal = resolved;
+				} catch (error) {
+					const unauthorized = error instanceof OcisApiError && [401, 403].includes(error.status);
+					return new Response(
+						unauthorized ? "Unauthorized" : "Authentication service unavailable",
+						{
+							status: unauthorized ? 401 : 503,
+							headers: unauthorized
+								? { "WWW-Authenticate": 'Basic realm="ownCloud MCP"' }
+								: undefined,
+						},
+					);
 				}
 
 				const sessionId = req.headers.get("mcp-session-id");
 				let session = sessionId ? sessions.get(sessionId) : undefined;
-				if (!session) {
-					session = buildSession();
+				if (session && !isMcpSessionOwnedBy(session.userId, principal.userId)) {
+					return new Response("Forbidden: MCP session belongs to another user", {
+						status: 403,
+					});
 				}
+				if (!session) {
+					session = buildSession(principal.userId, {
+						username: principal.username,
+						pat: principal.pat,
+					});
+				}
+				session.updateCredentials({ username: principal.username, pat: principal.pat });
 
 				const response = await session.transport.handleRequest(req);
 				const sid = response.headers.get("mcp-session-id") || session.transport.sessionId;
@@ -163,14 +239,6 @@ export function createMcpServer(qdrant: QdrantManager) {
 	console.log(`[MCP] Serveur Streamable HTTP à l'écoute sur http://0.0.0.0:${config.mcpPort}/mcp`);
 }
 
-export function hasValidBearerToken(req: Request, expectedToken: string): boolean {
-	const authorization = req.headers.get("authorization");
-	if (!authorization) return false;
-
-	const match = /^Bearer (.+)$/i.exec(authorization);
-	if (!match?.[1]) return false;
-
-	const supplied = Buffer.from(match[1]);
-	const expected = Buffer.from(expectedToken);
-	return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+export function isMcpSessionOwnedBy(sessionUserId: string, requestUserId: string): boolean {
+	return sessionUserId === requestUserId;
 }

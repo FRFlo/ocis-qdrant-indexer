@@ -4,11 +4,9 @@ export interface Config {
 	qdrantApiKey?: string;
 	qdrantCollection: string;
 	ocisWebdavUrl: string;
-	ocisPublicUrl?: string;
-	indexConcurrency: number;
-	ocisUsername: string;
-	ocisPassword?: string;
-	ocisToken?: string;
+	ocisGraphUrl: string;
+	userStorePath: string;
+	userStoreEncryptionKey: string;
 	ocisRequestTimeoutMs: number;
 	ocisMaxFileSizeBytes: number;
 	tikaUrl?: string;
@@ -58,17 +56,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 		throw new Error("EMBEDDING_MAX_TOKENS doit être au moins égal à 4.");
 	}
 
+	const ocisWebdavUrl = env.OCIS_WEBDAV_URL || "http://owncloud:9200/remote.php/dav/files";
 	return {
 		natsUrl: env.NATS_URL || "nats://owncloud:9233",
 		qdrantUrl: env.QDRANT_URL || "http://qdrant:6333",
 		qdrantApiKey: env.QDRANT_API_KEY,
 		qdrantCollection: env.QDRANT_COLLECTION || "owncloud_documents",
-		ocisWebdavUrl: env.OCIS_WEBDAV_URL || "http://owncloud:9200/remote.php/dav/files",
-		ocisPublicUrl: env.OCIS_PUBLIC_URL?.replace(/\/+$/, "") || undefined,
-		indexConcurrency: positiveInteger(env.INDEX_CONCURRENCY, 4, "INDEX_CONCURRENCY"),
-		ocisUsername: env.OCIS_USERNAME || "admin",
-		ocisPassword: env.OCIS_PASSWORD,
-		ocisToken: env.OCIS_TOKEN,
+		ocisWebdavUrl,
+		ocisGraphUrl:
+			env.OCIS_GRAPH_URL?.replace(/\/+$/, "") || `${new URL(ocisWebdavUrl).origin}/graph/v1.0`,
+		userStorePath: env.USER_STORE_PATH || "/data/users.sqlite",
+		userStoreEncryptionKey: env.USER_STORE_ENCRYPTION_KEY || "",
 		ocisRequestTimeoutMs: positiveInteger(
 			env.OCIS_REQUEST_TIMEOUT_MS,
 			30_000,

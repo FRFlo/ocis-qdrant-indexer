@@ -13,6 +13,7 @@ COPY src ./src
 ENV NODE_ENV=production
 ENV MCP_PORT=3000
 
+VOLUME ["/data"]
 EXPOSE 3000
 
 CMD ["bun", "run", "src/index.ts"]
