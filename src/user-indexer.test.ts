@@ -207,6 +207,21 @@ describe("UserIndexer", () => {
 		expect(deleteFileVectors).not.toHaveBeenCalled();
 	});
 
+	it("returns immediately before sync authentication and scanning complete", async () => {
+		const store = await makeStore();
+		const clientFactory = () =>
+			({
+				getUserContext: mock(() => new Promise<OcisUserContext>(() => {})),
+			}) as unknown as OcisClient;
+		const indexer = new UserIndexer({} as QdrantManager, store, clientFactory);
+
+		const started = indexer.startSync({ username: "alice", pat: "alice-pat" });
+		const duplicate = indexer.startSync({ username: "alice", pat: "alice-pat" });
+
+		expect(started).toEqual({ status: "started" });
+		expect(duplicate).toEqual({ status: "already_running" });
+	});
+
 	it("routes a NATS event only to users authorized for its SpaceId", async () => {
 		const store = await makeStore();
 		const contexts: Record<string, OcisUserContext> = {

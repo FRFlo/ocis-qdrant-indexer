@@ -28,7 +28,7 @@ Sidecar temps réel d'ingestion et de recherche sémantique (RAG) pour **ownClou
 ## Fonctionnalités
 
 - **Événementiel & Temps réel :** Consomme le stream NATS JetStream `main-queue` utilisé par oCIS. Les événements métier (`events.UploadReady`, `events.FileUploaded`, `events.ItemTrashed`, `events.ItemPurged`) sont routés par `SpaceId` vers les seuls comptes inscrits qui y ont actuellement accès.
-- **Rattrapage et mise à jour efficaces :** Au démarrage, réconcilie individuellement les utilisateurs enregistrés et leurs espaces accessibles. À la première authentification d'un compte, lance automatiquement sa synchronisation initiale en arrière-plan. L'outil `sync_owncloud_docs` permet ensuite de relancer un scan à la demande. Un SHA-256 du contenu est stocké avec chaque chunk ; les événements et scans suivants téléchargent le fichier pour vérifier ce hash.
+- **Rattrapage et mise à jour efficaces :** Au démarrage, réconcilie individuellement les utilisateurs enregistrés et leurs espaces accessibles. À la première authentification d'un compte, lance automatiquement sa synchronisation initiale en arrière-plan. L'outil `sync_owncloud_docs` lance aussi les scans à la demande en arrière-plan et répond immédiatement, sans attendre la fin de l'indexation. Le bilan final est visible dans les journaux du service. Un SHA-256 du contenu est stocké avec chaque chunk ; les événements et scans suivants téléchargent le fichier pour vérifier ce hash.
 - **Upsert propre & Zéro doublon :** Lorsqu'un fichier est modifié dans ownCloud, ses anciens vecteurs sont supprimés avant de réinsérer les nouveaux. En cas de suppression du fichier (`ItemTrashed` / `ItemPurged`), les vecteurs sont automatiquement purgés.
 - **Embeddings sans coût VPS :** Utilise Cloudflare Workers AI (`@cf/baai/bge-m3`, multilingue, 1024 dimensions) dans la limite du Free Tier quotidien (~9M tokens/jour). Support alternatif pour OpenAI (`text-embedding-3-small`) ou Ollama local.
 - **Extraction PDF :** Utilise [OpenDataLoader PDF](https://github.com/opendataloader-project/opendataloader-pdf) pour extraire le texte en Markdown, avec Java 11+ requis (inclus dans l'image Docker).
@@ -49,7 +49,9 @@ Recherche sémantique dans les cours et documents indexés depuis ownCloud.
 
 ### `sync_owncloud_docs`
 
-Synchronise à la demande les fichiers accessibles par le compte authentifié vers son index privé, incluant les espaces personnels, partagés et projet que ce compte peut lire.
+Lance en arrière-plan la synchronisation des fichiers accessibles par le compte authentifié vers son index privé, incluant les espaces personnels, partagés et projet que ce compte peut lire. L'outil répond immédiatement ; le bilan final (fichiers vérifiés, indexés et supprimés) est inscrit dans les journaux du service. Un appel pendant une synchronisation déjà en cours ne démarre pas de doublon.
+
+Pour le diagnostic de l'erreur générique `Internal tool error` du runtime MCP, voir [docs/sync-tool-runtime.md](docs/sync-tool-runtime.md). Sans les journaux Executor, le dépassement de délai reste une hypothèse et non une cause confirmée.
 
 ## Variables d'environnement
 

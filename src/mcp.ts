@@ -18,6 +18,44 @@ interface McpSession {
 	updateCredentials: (credentials: BasicCredentials) => void;
 }
 
+export function registerSyncTool(
+	server: McpServer,
+	userIndexer: Pick<UserIndexer, "startSync">,
+	getCredentials: () => BasicCredentials,
+): void {
+	server.registerTool(
+		"sync_owncloud_docs",
+		{
+			description:
+				"Lance en arrière-plan la synchronisation des fichiers ownCloud accessibles par le compte authentifié vers son index privé",
+			inputSchema: {},
+			annotations: { readOnlyHint: false, openWorldHint: false },
+		},
+		async () => {
+			try {
+				const result = await userIndexer.startSync(getCredentials());
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								result.status === "started"
+									? "Synchronisation démarrée en arrière-plan. Son état et son bilan final sont visibles dans les journaux du service."
+									: "Une synchronisation est déjà en cours pour ce compte. Son bilan final sera visible dans les journaux du service.",
+						},
+					],
+				};
+			} catch (err: unknown) {
+				const message = err instanceof Error ? err.message : String(err);
+				return {
+					isError: true,
+					content: [{ type: "text", text: `Erreur de synchronisation ownCloud: ${message}` }],
+				};
+			}
+		},
+	);
+}
+
 export function createMcpServer(qdrant: QdrantManager, userIndexer: UserIndexer) {
 	const sessions = new Map<string, McpSession>();
 
@@ -97,37 +135,7 @@ export function createMcpServer(qdrant: QdrantManager, userIndexer: UserIndexer)
 			},
 		);
 
-		server.registerTool(
-			"sync_owncloud_docs",
-			{
-				description:
-					"Synchronise les fichiers ownCloud accessibles par le compte authentifié vers son index privé",
-				inputSchema: {},
-				annotations: { readOnlyHint: false, openWorldHint: false },
-			},
-			async () => {
-				try {
-					const result = await userIndexer.sync(currentCredentials);
-					return {
-						content: [
-							{
-								type: "text",
-								text:
-									`Synchronisation terminée pour ${result.spaces} espace(s): ` +
-									`${result.checked} fichier(s) vérifié(s), ${result.indexed} indexé(s), ` +
-									`${result.deleted} supprimé(s).`,
-							},
-						],
-					};
-				} catch (err: unknown) {
-					const message = err instanceof Error ? err.message : String(err);
-					return {
-						isError: true,
-						content: [{ type: "text", text: `Erreur de synchronisation ownCloud: ${message}` }],
-					};
-				}
-			},
-		);
+		registerSyncTool(server, userIndexer, () => currentCredentials);
 
 		const transport = new WebStandardStreamableHTTPServerTransport({
 			sessionIdGenerator: () => crypto.randomUUID(),

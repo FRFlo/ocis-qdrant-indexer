@@ -23,6 +23,7 @@ export class UserIndexer {
 	private qdrant: QdrantManager;
 	private store: UserCredentialStore;
 	private syncsInFlight = new Map<string, Promise<UserSyncResult>>();
+	private syncRequestsInFlight = new Set<string>();
 	private clientFactory: OcisClientFactory;
 	private tokenCounterFactory: () => Promise<TokenCounter>;
 	private tokenCounterPromise?: Promise<TokenCounter>;
@@ -90,6 +91,29 @@ export class UserIndexer {
 		}
 	}
 
+	startSync(credentials: BasicCredentials): { status: "started" | "already_running" } {
+		const requestKey = createHash("sha256").update(credentials.username).digest("hex");
+		if (this.syncRequestsInFlight.has(requestKey)) return { status: "already_running" };
+
+		this.syncRequestsInFlight.add(requestKey);
+		console.info("[Indexer] Sync à la demande planifiée en arrière-plan.");
+		void Promise.resolve()
+			.then(() => this.sync(credentials))
+			.then((result) => {
+				console.info(
+					`[Indexer] Sync à la demande terminée (tenant=${userScopeId(result.userId)}, ` +
+						`espaces=${result.spaces}, vérifiés=${result.checked}, ` +
+						`indexés=${result.indexed}, supprimés=${result.deleted}).`,
+				);
+			})
+			.catch((error: unknown) => {
+				const errorType = error instanceof Error ? error.name : "Erreur inconnue";
+				console.error(`[Indexer] Échec de sync à la demande (type=${errorType}).`);
+			})
+			.finally(() => this.syncRequestsInFlight.delete(requestKey));
+		return { status: "started" };
+	}
+
 	private async syncContext(
 		credentials: BasicCredentials,
 		context: OcisUserContext,
@@ -138,24 +162,37 @@ export class UserIndexer {
 	}
 
 	private startInitialSync(context: OcisUserContext, credentials: BasicCredentials): void {
+		this.startBackgroundSync(context, credentials, true);
+	}
+
+	private startBackgroundSync(
+		context: OcisUserContext,
+		credentials: BasicCredentials,
+		initial: boolean,
+	): void {
 		if (this.syncsInFlight.has(context.userId)) return;
 		const tenantId = userScopeId(context.userId);
-		console.info(
-			`[Indexer] Première authentification enregistrée (tenant=${tenantId}); sync initiale démarrée.`,
-		);
+		const label = initial ? "Sync initiale" : "Sync à la demande";
+		if (initial) {
+			console.info(
+				`[Indexer] Première authentification enregistrée (tenant=${tenantId}); sync initiale démarrée.`,
+			);
+		} else {
+			console.info(`[Indexer] ${label} démarrée (tenant=${tenantId}).`);
+		}
 		const sync = Promise.resolve().then(() => this.syncContext(credentials, context));
 		this.syncsInFlight.set(context.userId, sync);
 		void sync
 			.then((result) => {
 				console.info(
-					`[Indexer] Sync initiale terminée (tenant=${tenantId}, espaces=${result.spaces}, ` +
+					`[Indexer] ${label} terminée (tenant=${tenantId}, espaces=${result.spaces}, ` +
 						`vérifiés=${result.checked}, indexés=${result.indexed}, supprimés=${result.deleted}).`,
 				);
 			})
 			.catch((error: unknown) => {
 				const errorType = error instanceof Error ? error.name : "Erreur inconnue";
 				console.error(
-					`[Indexer] Échec de la sync initiale (tenant=${tenantId}, type=${errorType}).`,
+					`[Indexer] Échec de ${label.toLowerCase()} (tenant=${tenantId}, type=${errorType}).`,
 				);
 			})
 			.finally(() => {

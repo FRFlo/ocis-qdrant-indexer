@@ -32,7 +32,7 @@
 
 ## Continuous indexing and NATS
 
-The first successful MCP authentication automatically starts a background sync for the newly registered user. `sync_owncloud_docs` remains available for explicit re-syncs; startup reconciliation covers users already registered when the service starts.
+The first successful MCP authentication automatically starts a background sync for the newly registered user. `sync_owncloud_docs` starts explicit re-syncs in the background and returns immediately rather than holding the MCP tool call open for the duration of indexing; a duplicate request does not start another sync. Completion and failure summaries are logged without credentials or file contents. Startup reconciliation covers users already registered when the service starts.
 
 OAuth for MCP does not automatically authorize NATS subscriptions. NATS has its own authentication and subject-level authorization; the repository's `NATS_URL` credentials are independent from ownCloud PATs. The MVP preserves that deployment-level NATS configuration rather than introducing NATS OAuth/Auth Callout.
 
