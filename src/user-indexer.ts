@@ -104,6 +104,8 @@ export class UserIndexer {
 		for (const drive of context.drives) {
 			const driveClient = client.forDrive(drive.id);
 			const files = await driveClient.listFiles();
+			const driveScope = createHash("sha256").update(drive.id).digest("hex").slice(0, 8);
+			console.info(`[Indexer] Énumération espace=${driveScope}: ${files.length} fichier(s).`);
 			const livePaths = new Set(files);
 			for (const path of files) {
 				const result = await this.indexFile(
@@ -119,6 +121,12 @@ export class UserIndexer {
 				tenantId,
 				spaceId: drive.id,
 			});
+			if (files.length === 0 && indexedPaths.length > 0) {
+				console.warn(
+					`[Indexer] Énumération vide espace=${driveScope}; conservation de ${indexedPaths.length} chemin(s) indexé(s).`,
+				);
+				continue;
+			}
 			for (const path of indexedPaths) {
 				if (!livePaths.has(path)) {
 					await this.qdrant.deleteFileVectors(path, { tenantId, spaceId: drive.id });

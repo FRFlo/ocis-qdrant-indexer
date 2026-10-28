@@ -152,6 +152,20 @@ describe("OcisClient", () => {
 		expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "PROPFIND" });
 	});
 
+	it("matches WebDAV hrefs when the space ID contains a literal dollar sign", async () => {
+		config.ocisWebdavUrl = "https://owncloud.example/remote.php/dav/files";
+		const listing = `<d:multistatus xmlns:d="DAV:">
+			<d:response><d:href>/dav/spaces/space$owner/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response>
+			<d:response><d:href>/dav/spaces/space$owner/Notes.md</d:href><d:propstat><d:prop><d:resourcetype/></d:prop></d:propstat></d:response>
+		</d:multistatus>`;
+		const fetchMock = mock(async (_input: string | URL) => new Response(listing, { status: 207 }));
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		const client = new OcisClient({ username: "alice", pat: "alice-pat" }).forDrive("space$owner");
+
+		await expect(client.listFiles()).resolves.toEqual(["Notes.md"]);
+		expect(fetchMock.mock.calls[0]?.[0]).toBe("https://owncloud.example/dav/spaces/space%24owner/");
+	});
+
 	it("reads file metadata from WebDAV properties", async () => {
 		config.ocisWebdavUrl = "https://owncloud.example/dav/spaces/test-space/";
 		globalThis.fetch = mock(

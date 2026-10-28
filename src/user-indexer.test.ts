@@ -176,6 +176,37 @@ describe("UserIndexer", () => {
 		});
 	});
 
+	it("does not delete indexed paths when a drive scan unexpectedly returns empty", async () => {
+		const store = await makeStore();
+		const context: OcisUserContext = {
+			userId: "alice-id",
+			username: "alice",
+			drives: [{ id: "alice-drive", name: "Alice", driveType: "personal" }],
+		};
+		store.save({
+			userId: context.userId,
+			username: context.username,
+			pat: "alice-pat",
+			drives: context.drives,
+		});
+		const deleteFileVectors = mock(async () => undefined);
+		const qdrant = {
+			ensureCollection: mock(async () => undefined),
+			listIndexedPaths: mock(async () => ["Notes/existing.md"]),
+			deleteFileVectors,
+		} as unknown as QdrantManager;
+		const clientFactory = () =>
+			({
+				getUserContext: mock(async () => context),
+				forDrive: mock(() => ({ listFiles: mock(async () => []) })),
+			}) as unknown as OcisClient;
+		const indexer = new UserIndexer(qdrant, store, clientFactory);
+
+		await indexer.sync({ username: "alice", pat: "alice-pat" });
+
+		expect(deleteFileVectors).not.toHaveBeenCalled();
+	});
+
 	it("routes a NATS event only to users authorized for its SpaceId", async () => {
 		const store = await makeStore();
 		const contexts: Record<string, OcisUserContext> = {

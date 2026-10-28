@@ -120,7 +120,9 @@ export class OcisClient {
 
 	async listFiles(): Promise<string[]> {
 		const root = this.fileUrl("");
-		const rootPath = new URL(root).pathname;
+		const rootUrl = new URL(root);
+		const rootSegments = this.decodePathSegments(rootUrl.pathname);
+		if (!rootSegments) throw new Error("Racine WebDAV invalide.");
 		const pending = [root];
 		const visited = new Set<string>();
 		const files: string[] = [];
@@ -156,17 +158,16 @@ export class OcisClient {
 				if (!href) continue;
 
 				const url = new URL(this.decodeXml(href), directoryUrl);
-				if (url.origin !== new URL(root).origin || !url.pathname.startsWith(rootPath)) continue;
-				const relativePath = url.pathname.slice(rootPath.length).replace(/\/+$/, "");
-				if (!relativePath) continue;
-
-				const segments = relativePath.split("/").map((segment) => {
-					try {
-						return decodeURIComponent(segment);
-					} catch {
-						throw new Error(`Chemin WebDAV invalide reçu dans PROPFIND: ${href}`);
-					}
-				});
+				if (url.origin !== rootUrl.origin) continue;
+				const responseSegments = this.decodePathSegments(url.pathname);
+				if (
+					!responseSegments ||
+					responseSegments.length <= rootSegments.length ||
+					!rootSegments.every((segment, index) => responseSegments[index] === segment)
+				) {
+					continue;
+				}
+				const segments = responseSegments.slice(rootSegments.length);
 				if (
 					segments.some(
 						(segment) =>
@@ -333,5 +334,13 @@ export class OcisClient {
 			.replace(/&gt;/g, ">")
 			.replace(/&quot;/g, '"')
 			.replace(/&apos;/g, "'");
+	}
+
+	private decodePathSegments(pathname: string): string[] | undefined {
+		try {
+			return pathname.split("/").filter(Boolean).map(decodeURIComponent);
+		} catch {
+			return undefined;
+		}
 	}
 }
