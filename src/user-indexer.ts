@@ -22,6 +22,7 @@ type OcisClientFactory = (credentials: BasicCredentials) => OcisClient;
 export class UserIndexer {
 	private qdrant: QdrantManager;
 	private store: UserCredentialStore;
+	private syncsInFlight = new Map<string, Promise<UserSyncResult>>();
 	private clientFactory: OcisClientFactory;
 	private tokenCounterFactory: () => Promise<TokenCounter>;
 	private tokenCounterPromise?: Promise<TokenCounter>;
@@ -60,6 +61,7 @@ export class UserIndexer {
 			pat: credentials.pat,
 			drives: context.drives,
 		});
+		if (!previous) this.startInitialSync(context, credentials);
 		return context;
 	}
 
@@ -74,6 +76,24 @@ export class UserIndexer {
 
 	async sync(credentials: BasicCredentials): Promise<UserSyncResult> {
 		const context = await this.authenticate(credentials);
+		const pending = this.syncsInFlight.get(context.userId);
+		if (pending) return pending;
+
+		const sync = this.syncContext(credentials, context);
+		this.syncsInFlight.set(context.userId, sync);
+		try {
+			return await sync;
+		} finally {
+			if (this.syncsInFlight.get(context.userId) === sync) {
+				this.syncsInFlight.delete(context.userId);
+			}
+		}
+	}
+
+	private async syncContext(
+		credentials: BasicCredentials,
+		context: OcisUserContext,
+	): Promise<UserSyncResult> {
 		const tenantId = userScopeId(context.userId);
 		await this.qdrant.ensureCollection(tenantId);
 		let checked = 0;
@@ -109,6 +129,34 @@ export class UserIndexer {
 		return { userId: context.userId, spaces: context.drives.length, checked, indexed, deleted };
 	}
 
+	private startInitialSync(context: OcisUserContext, credentials: BasicCredentials): void {
+		if (this.syncsInFlight.has(context.userId)) return;
+		const tenantId = userScopeId(context.userId);
+		console.info(
+			`[Indexer] Première authentification enregistrée (tenant=${tenantId}); sync initiale démarrée.`,
+		);
+		const sync = Promise.resolve().then(() => this.syncContext(credentials, context));
+		this.syncsInFlight.set(context.userId, sync);
+		void sync
+			.then((result) => {
+				console.info(
+					`[Indexer] Sync initiale terminée (tenant=${tenantId}, espaces=${result.spaces}, ` +
+						`vérifiés=${result.checked}, indexés=${result.indexed}, supprimés=${result.deleted}).`,
+				);
+			})
+			.catch((error: unknown) => {
+				const errorType = error instanceof Error ? error.name : "Erreur inconnue";
+				console.error(
+					`[Indexer] Échec de la sync initiale (tenant=${tenantId}, type=${errorType}).`,
+				);
+			})
+			.finally(() => {
+				if (this.syncsInFlight.get(context.userId) === sync) {
+					this.syncsInFlight.delete(context.userId);
+				}
+			});
+	}
+
 	async syncRegisteredUsers(): Promise<void> {
 		let users: StoredUserCredentials[];
 		try {
@@ -117,11 +165,20 @@ export class UserIndexer {
 			console.error("[Indexer] Impossible de lire le registre des utilisateurs:", error);
 			return;
 		}
+		console.info(`[Indexer] Réconciliation des utilisateurs enregistrés: ${users.length}.`);
 		for (const user of users) {
 			try {
-				await this.sync({ username: user.username, pat: user.pat });
+				const result = await this.sync({ username: user.username, pat: user.pat });
+				console.info(
+					`[Indexer] Réconciliation terminée (tenant=${userScopeId(user.userId)}, ` +
+						`espaces=${result.spaces}, vérifiés=${result.checked}, indexés=${result.indexed}, ` +
+						`supprimés=${result.deleted}).`,
+				);
 			} catch (error) {
-				console.error(`[Indexer] Échec de synchronisation pour un compte ownCloud:`, error);
+				const errorType = error instanceof Error ? error.name : "Erreur inconnue";
+				console.error(
+					`[Indexer] Échec de réconciliation (tenant=${userScopeId(user.userId)}, type=${errorType}).`,
+				);
 			}
 		}
 	}
@@ -132,14 +189,34 @@ export class UserIndexer {
 			Ref?: {
 				Path?: string;
 				path?: string;
-				ResourceId?: { SpaceId?: string; space_id?: string };
-				resource_id?: { SpaceId?: string; space_id?: string };
+				ResourceId?: {
+					SpaceId?: string;
+					space_id?: string;
+					OpaqueId?: string;
+					opaque_id?: string;
+				};
+				resource_id?: {
+					SpaceId?: string;
+					space_id?: string;
+					OpaqueId?: string;
+					opaque_id?: string;
+				};
 			};
 			FileRef?: {
 				Path?: string;
 				path?: string;
-				ResourceId?: { SpaceId?: string; space_id?: string };
-				resource_id?: { SpaceId?: string; space_id?: string };
+				ResourceId?: {
+					SpaceId?: string;
+					space_id?: string;
+					OpaqueId?: string;
+					opaque_id?: string;
+				};
+				resource_id?: {
+					SpaceId?: string;
+					space_id?: string;
+					OpaqueId?: string;
+					opaque_id?: string;
+				};
 			};
 			ResourceID?: { SpaceId?: string; space_id?: string; OpaqueId?: string; opaque_id?: string };
 			ID?: { SpaceId?: string; space_id?: string; OpaqueId?: string; opaque_id?: string };
@@ -169,6 +246,7 @@ export class UserIndexer {
 		if (!spaceId || !path) {
 			// A path alone is not a safe tenant key: several users/spaces may
 			// contain the same relative path.
+			console.info(`[Indexer] ${eventName} sans espace/chemin; réconciliation sécurisée.`);
 			await this.syncRegisteredUsers();
 			return;
 		}
@@ -178,6 +256,9 @@ export class UserIndexer {
 			user.drives.some((drive) => drive.id === spaceId),
 		);
 		if (authorizedUsers.length === 0) {
+			console.info(
+				`[Indexer] ${eventName} pour un espace non enregistré; réconciliation sécurisée.`,
+			);
 			await this.syncRegisteredUsers();
 			return;
 		}
@@ -198,9 +279,11 @@ export class UserIndexer {
 			const scope = { tenantId, spaceId };
 			if (isDelete) {
 				await this.qdrant.deleteFileVectors(path, scope);
+				console.info(`[Indexer] ${eventName} traité (suppression, tenant=${tenantId}).`);
 				continue;
 			}
-			await this.indexFile(client.forDrive(spaceId), path, scope, user.userId);
+			const result = await this.indexFile(client.forDrive(spaceId), path, scope, user.userId);
+			console.info(`[Indexer] ${eventName} traité (${result}, tenant=${tenantId}).`);
 		}
 	}
 

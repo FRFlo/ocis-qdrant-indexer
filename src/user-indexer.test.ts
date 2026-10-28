@@ -30,6 +30,35 @@ async function makeStore() {
 }
 
 describe("UserIndexer", () => {
+	it("starts one background initial sync on first authentication only", async () => {
+		const store = await makeStore();
+		const context: OcisUserContext = {
+			userId: "first-login-id",
+			username: "first-login",
+			drives: [],
+		};
+		const clientFactory = () =>
+			({
+				getUserContext: mock(async () => context),
+				forDrive: mock(() => ({ listFiles: mock(async () => []) })),
+			}) as unknown as OcisClient;
+		const ensureCollection = mock(async () => undefined);
+		const indexer = new UserIndexer(
+			{ ensureCollection } as unknown as QdrantManager,
+			store,
+			clientFactory,
+		);
+
+		await Promise.all([
+			indexer.authenticate({ username: "first-login", pat: "secret-pat" }),
+			indexer.authenticate({ username: "first-login", pat: "secret-pat" }),
+		]);
+		await Promise.resolve();
+
+		expect(ensureCollection).toHaveBeenCalledTimes(1);
+		expect(store.get(context.userId)?.pat).toBe("secret-pat");
+	});
+
 	it("indexes the same relative path into each user's own space and collection", async () => {
 		const store = await makeStore();
 		const contexts: Record<string, OcisUserContext> = {
@@ -126,10 +155,14 @@ describe("UserIndexer", () => {
 			drives: [{ id: "alice-drive", name: "Alice", driveType: "personal" }],
 		};
 		const clientFactory = () =>
-			({ getUserContext: mock(async () => context) }) as unknown as OcisClient;
+			({
+				getUserContext: mock(async () => context),
+				forDrive: mock(() => ({ listFiles: mock(async () => []) })),
+			}) as unknown as OcisClient;
 		const search = mock(async () => []);
 		const qdrant = {
 			ensureCollection: mock(async () => undefined),
+			listIndexedPaths: mock(async () => []),
 			deleteSpaceVectors: mock(async () => undefined),
 			search,
 		} as unknown as QdrantManager;
@@ -207,8 +240,10 @@ describe("UserIndexer", () => {
 		);
 
 		await indexer.handleEvent("events.FileUploaded", {
-			Ref: { Path: "Notes/plan.md" },
-			ResourceID: { SpaceId: "alice-drive", OpaqueId: "doc-1" },
+			FileRef: {
+				path: "./Notes/plan.md",
+				resource_id: { space_id: "alice-drive", opaque_id: "doc-1" },
+			},
 		});
 
 		expect(indexed).toEqual([

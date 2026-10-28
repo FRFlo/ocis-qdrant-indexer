@@ -32,6 +32,8 @@
 
 ## Continuous indexing and NATS
 
+The first successful MCP authentication automatically starts a background sync for the newly registered user. `sync_owncloud_docs` remains available for explicit re-syncs; startup reconciliation covers users already registered when the service starts.
+
 OAuth for MCP does not automatically authorize NATS subscriptions. NATS has its own authentication and subject-level authorization; the repository's `NATS_URL` credentials are independent from ownCloud PATs. The MVP preserves that deployment-level NATS configuration rather than introducing NATS OAuth/Auth Callout.
 
 For each event with `SpaceId`, only registered users whose ownCloud account currently exposes that space may be considered. Content reads are made with that user's PAT, not a global account. If the event has no `SpaceId`, reconcile registered users individually; never infer ownership from a matching path. This is safer but can create additional load.

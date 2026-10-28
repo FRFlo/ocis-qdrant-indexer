@@ -20,11 +20,12 @@ The existing single-account global collection and shared bearer token are not ac
 1. MCP requests require HTTP Basic credentials containing an ownCloud username and that user's PAT. Missing, malformed, empty, or invalid credentials fail closed.
 2. Validate credentials through ownCloud Graph. The server—not the caller—derives canonical user ID, opaque tenant ID, and accessible drives.
 3. Bind an MCP session to the validated ownCloud identity. A different identity presenting the same session ID is rejected.
-4. Before a search, refresh/validate the user's accessible drive list. Search only the matching per-user Qdrant collection and the IDs in that current list. An empty list yields no results.
-5. `sync_owncloud_docs` enumerates and reads files only through that user's ownCloud credentials and authorized drives, then writes to that user's collection with a drive/space ID on every point.
-6. On an ACL/share revocation, removed spaces are immediately excluded from search and are purged from that user's collection during synchronization/reconciliation.
-7. NATS events are routed by `SpaceId` only to users whose ownCloud account can access that space. Same relative paths in different users or spaces must not collide. Missing `SpaceId` causes per-user reconciliation; it never causes global path-only indexing/deletion.
-8. A failed ownCloud credential check, missing/unknown identity, unauthorized space, or failed content read must not fall back to a global collection, service account, admin impersonation, or caller-provided tenant ID.
+4. On the first successful authentication of an identity, persist its encrypted credentials and start one background initial sync. Do not block MCP initialization on the full scan; log sanitized start, completion, and failure summaries. Concurrent first requests must not start duplicate scans.
+5. Before a search, refresh/validate the user's accessible drive list. Search only the matching per-user Qdrant collection and the IDs in that current list. An empty list yields no results.
+6. `sync_owncloud_docs` enumerates and reads files only through that user's ownCloud credentials and authorized drives, then writes to that user's collection with a drive/space ID on every point.
+7. On an ACL/share revocation, removed spaces are immediately excluded from search and are purged from that user's collection during synchronization/reconciliation.
+8. NATS events are routed by `SpaceId` only to users whose ownCloud account can access that space. Same relative paths in different users or spaces must not collide. Missing `SpaceId` causes per-user reconciliation; it never causes global path-only indexing/deletion.
+9. A failed ownCloud credential check, missing/unknown identity, unauthorized space, or failed content read must not fall back to a global collection, service account, admin impersonation, or caller-provided tenant ID.
 
 ## Realistic isolation scenario
 
@@ -32,7 +33,7 @@ Create ownCloud users **Alice** and **Bob**, each with a distinct PAT and at lea
 
 Expected observations:
 
-- Alice's first MCP request validates as Alice and creates/uses only Alice's Qdrant collection.
+- Alice's first MCP authentication validates as Alice, creates/uses only Alice's Qdrant collection, and triggers her initial background sync.
 - Alice's sync indexes her personal and authorized shared/project drive; Bob's sync indexes only Bob's personal drive.
 - Searching for Alice-only content as Alice returns Alice's matching file. Searching as Bob returns no Alice result, including for the identical relative path.
 - Bob cannot add Alice's `space_id`, path, or tenant ID to a tool argument to retrieve Alice's data.
