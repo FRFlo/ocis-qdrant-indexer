@@ -27,14 +27,15 @@ Sidecar temps réel d'ingestion et de recherche sémantique (RAG) pour **ownClou
 
 ## Fonctionnalités
 
-- **Événementiel & Temps réel :** Consomme le stream NATS JetStream `main-queue` utilisé par oCIS. Les événements métier (`events.UploadReady`, `events.FileUploaded`, `events.ItemTrashed`, `events.ItemPurged`) sont lus depuis les métadonnées du message. Aucun polling ou cron requis.
-- **Rattrapage et mise à jour efficaces :** Au démarrage, parcourt récursivement l'espace WebDAV de `OCIS_USERNAME` pour indexer les documents pris en charge déjà présents. Un SHA-256 du contenu est stocké avec chaque chunk ; les événements et scans suivants téléchargent le fichier pour vérifier ce hash, mais ne recalculent pas les embeddings si le contenu n'a pas changé.
+- **Événementiel & Temps réel :** Consomme le stream NATS JetStream `main-queue` utilisé par oCIS. Les événements métier (`events.UploadReady`, `events.FileUploaded`, `events.ItemTrashed`, `events.ItemPurged`) sont routés par `SpaceId` vers les seuls comptes inscrits qui y ont actuellement accès.
+- **Rattrapage et mise à jour efficaces :** Au démarrage, réconcilie individuellement les utilisateurs enregistrés et leurs espaces accessibles. À la première requête, le compte ownCloud vérifié peut appeler `sync_owncloud_docs` pour indexer ses fichiers. Un SHA-256 du contenu est stocké avec chaque chunk ; les événements et scans suivants téléchargent le fichier pour vérifier ce hash.
 - **Upsert propre & Zéro doublon :** Lorsqu'un fichier est modifié dans ownCloud, ses anciens vecteurs sont supprimés avant de réinsérer les nouveaux. En cas de suppression du fichier (`ItemTrashed` / `ItemPurged`), les vecteurs sont automatiquement purgés.
 - **Embeddings sans coût VPS :** Utilise Cloudflare Workers AI (`@cf/baai/bge-m3`, multilingue, 1024 dimensions) dans la limite du Free Tier quotidien (~9M tokens/jour). Support alternatif pour OpenAI (`text-embedding-3-small`) ou Ollama local.
 - **Extraction PDF :** Utilise [OpenDataLoader PDF](https://github.com/opendataloader-project/opendataloader-pdf) pour extraire le texte en Markdown, avec Java 11+ requis (inclus dans l'image Docker).
 - **Extraction générique et OCR :** Les fichiers sont d’abord décodés en UTF-8 strict, sans se fier à leur extension. `TIKA_URL` (optionnel) tente l’extraction des contenus binaires ; lorsque le texte reste vide, `PADDLEOCR_URL` (optionnel) délègue les images et PDF scannés à PaddleOCR, avec un en-tête de page dans le texte indexé.
 - **Découpage hiérarchique :** Parse le Markdown/GFM en AST, construit une arborescence H1 à H6 et répète les titres parents dans chaque chunk. Préserve les blocs sous le budget ; subdivise les blocs trop longs en conservant les en-têtes de tableaux. Le budget par défaut de 7 000 tokens est compté avec le tokenizer du modèle : tokenizer BGE-M3 officiel Hugging Face (révision épinglée) ou `cl100k_base` pour les modèles d’embedding OpenAI pris en charge. Les fichiers du tokenizer sont téléchargés puis mis en cache ; les modèles personnalisés doivent fournir leur identifiant Hugging Face dans `EMBEDDING_TOKENIZER_MODEL`.
-- **Serveur MCP Streamable HTTP :** Expose nativement l'outil `search_owncloud_docs` sur `POST /mcp` compatible avec Executor, Claude Desktop et Hermes Agent.
+- **Serveur MCP Streamable HTTP :** Expose `search_owncloud_docs` et `sync_owncloud_docs` sur `POST /mcp`. Chaque session est liée à un compte ownCloud validé et à sa collection Qdrant privée.
+- **Isolation multi-utilisateur :** Les PATs sont stockés chiffrés avec AES-256-GCM; chaque utilisateur a une collection Qdrant distincte, filtrée par les espaces accessibles à son compte.
 
 ## Outil MCP disponible
 
@@ -46,21 +47,21 @@ Recherche sémantique dans les cours et documents indexés depuis ownCloud.
 - `limit` (number, optionnel, défaut : 5) : Nombre d'extraits pertinents à renvoyer.
 - `path_prefix` (string, optionnel) : Filtre sur un sous-dossier (ex. `Cours/AP4/`).
 
+### `sync_owncloud_docs`
+
+Synchronise à la demande les fichiers accessibles par le compte authentifié vers son index privé, incluant les espaces personnels, partagés et projet que ce compte peut lire.
+
 ## Variables d'environnement
 
 | Variable                        | Description                                                                            | Défaut                                      |
 | ------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------- |
 | `NATS_URL`                      | URL de connexion au bus NATS oCIS                                                      | `nats://owncloud:9233`                      |
 | `QDRANT_URL`                    | URL de la base vectorielle Qdrant                                                      | `http://qdrant:6333`                        |
-| `QDRANT_COLLECTION`             | Nom de la collection vectorielle                                                       | `owncloud_documents`                        |
+| `QDRANT_COLLECTION`             | Préfixe des collections Qdrant isolées par utilisateur                                 | `owncloud_documents`                        |
 | `OCIS_WEBDAV_URL`               | Racine WebDAV oCIS (endpoint `.../dav/spaces/{space-id}` recommandé)                   | `http://owncloud:9200/remote.php/dav/files` |
-| `OCIS_USERNAME`                 | Nom d'utilisateur oCIS                                                                 | `admin`                                     |
-| `OCIS_PASSWORD`                 | Mot de passe oCIS (authentification Basic WebDAV)                                      | -                                           |
-| `OCIS_TOKEN`                    | Jeton WebDAV oCIS (Bearer ou jeton d'application)                                      | -                                           |
+| `OCIS_GRAPH_URL`                | Racine Graph API oCIS                                                                  | dérivée de `OCIS_WEBDAV_URL`                |
 | `OCIS_REQUEST_TIMEOUT_MS`       | Délai maximal d'un téléchargement WebDAV (ms)                                          | `30000`                                     |
 | `OCIS_MAX_FILE_SIZE_BYTES`      | Taille maximale téléchargée depuis WebDAV (octets)                                     | `52428800`                                  |
-| `OCIS_PUBLIC_URL`               | URL publique de l'interface ownCloud, utilisée pour construire le lien user-facing     | -                                           |
-| `INDEX_CONCURRENCY`             | Nombre maximal de fichiers traités simultanément au scan initial                       | `4`                                         |
 | `TIKA_URL`                      | URL de base facultative du serveur Apache Tika (`/tika/md` est ajouté automatiquement) | -                                           |
 | `PADDLEOCR_URL`                 | URL facultative du service OCR PaddleOCR (ex. `http://paddleocr:8080`)                 | -                                           |
 | `PADDLEOCR_TIMEOUT_MS`          | Délai maximal d'une requête OCR (ms)                                                   | `300000`                                    |
@@ -73,18 +74,31 @@ Recherche sémantique dans les cours et documents indexés depuis ownCloud.
 | `CLOUDFLARE_API_TOKEN`          | Jeton API Cloudflare Workers AI                                                        | -                                           |
 | `CLOUDFLARE_MODEL`              | Modèle d'embedding Cloudflare                                                          | `@cf/baai/bge-m3`                           |
 | `MCP_PORT`                      | Port d'écoute du serveur MCP                                                           | `3000`                                      |
-| `MCP_AUTH_TOKEN`                | Jeton Bearer facultatif pour protéger les routes MCP                                   | - (authentification désactivée)             |
+| `USER_STORE_PATH`               | Fichier SQLite durable des utilisateurs, PATs chiffrés et espaces accessibles          | `/data/users.sqlite`                        |
+| `USER_STORE_ENCRYPTION_KEY`     | Clé AES-256-GCM stable (32 octets en base64 ou 64 caractères hex)                      | requis                                      |
 
 Pour indexer un espace oCIS, définissez `OCIS_WEBDAV_URL` sur son endpoint
 `/dav/spaces/{space-id}/`. L'indexeur ajoute les chemins de fichiers à cette
-racine. L'ancien endpoint `/remote.php/dav/files` reste compatible et reçoit
-automatiquement `OCIS_USERNAME` dans son chemin.
+racine avec le PAT du compte authentifié. Pour l'endpoint
+`/remote.php/dav/files`, le nom d'utilisateur authentifié est ajouté au chemin.
 
-L'indexeur doit disposer de `OCIS_TOKEN` ou de `OCIS_PASSWORD`. Le jeton est
-d'abord envoyé en Bearer ; en cas de `401`, il est réessayé en Basic comme mot de
-passe d'application oCIS. Pour Basic, le nom d'utilisateur doit correspondre au
-compte qui possède l'espace WebDAV ciblé. Les jetons d'application oCIS sont
-utilisés comme mot de passe Basic ; le serveur oCIS doit avoir `auth-app` activé.
+Le MCP exige HTTP Basic avec le **nom d'utilisateur ownCloud et son PAT personnel**.
+Les identifiants sont vérifiés auprès de Graph (`/me`, `/me/drives`); le PAT est
+ensuite conservé chiffré afin que le worker NATS puisse traiter les événements.
+Activez `auth-app` pour les PATs ownCloud. Le serveur doit être exposé uniquement
+via HTTPS (par exemple derrière un reverse proxy TLS), car Basic transmet le PAT
+à chaque requête.
+
+Montez un volume Docker persistant sur `/data` pour conserver `users.sqlite`.
+Fournissez `USER_STORE_ENCRYPTION_KEY` depuis un gestionnaire de secrets, pas
+depuis le dépôt. Sauvegardez le fichier SQLite et la clé séparément; la perte ou
+la rotation non coordonnée de la clé rend les PATs déjà persistés illisibles.
+NATS garde son mécanisme d'authentification propre, configuré via `NATS_URL`;
+un PAT ownCloud n'authentifie pas une connexion NATS.
+
+Les décisions d'architecture et les critères d'acceptation multi-utilisateur
+sont décrits dans [`docs/multi-user-architecture.md`](docs/multi-user-architecture.md)
+et [`docs/multi-user-spec.md`](docs/multi-user-spec.md).
 
 Dans Docker Compose, protégez le `$` du space ID contre l'interpolation en
 utilisant une valeur entre apostrophes simples, par exemple :
@@ -113,10 +127,9 @@ conserve ses poids dans `/models/.paddleocr`, ce qui évite de les télécharger
 chaque recréation du conteneur. Le premier téléchargement peut retarder son état
 healthy.
 
-Lorsque `MCP_AUTH_TOKEN` est défini, les clients doivent envoyer
-`Authorization: Bearer <jeton>` sur `/mcp` (et `/api/v1/mcp`). Sans cette variable,
-les routes MCP restent accessibles sans authentification. Gardez le port MCP sur
-un réseau de confiance si l'authentification est désactivée.
+Les clients MCP doivent envoyer `Authorization: Basic <base64(username:PAT)>`
+sur `/mcp` (et `/api/v1/mcp`). Les sessions sont refusées si un autre compte
+ownCloud réutilise leur `mcp-session-id`.
 
 ## Développement local
 
